@@ -363,7 +363,7 @@ class PyAuto:
             pickle.dump(data, open(filename, 'wb'))
 
     def plot_continuation(self, param: str, var: str, cont: Union[Any, str, int], ax: plt.Axes = None,
-                          force_axis_lim_update: bool = False, **kwargs) -> plt.Axes:
+                          force_axis_lim_update: bool = False, **kwargs) -> LineCollection:
         """Line plot of 1D/2D parameter continuation and the respective codimension 1/2 bifurcations.
 
         Parameters
@@ -377,7 +377,7 @@ class PyAuto:
 
         Returns
         -------
-        plt.Axes
+        LineCollection
         """
 
         if ax is None:
@@ -420,11 +420,11 @@ class PyAuto:
         ax.set_ylabel(var, labelpad=label_pad)
         self._update_axis_lims(ax, ax_data=[x, y], padding=axislim_pad, force_update=force_axis_lim_update)
 
-        return ax
+        return line_col
 
     def plot_trajectory(self, vars: Union[list, tuple], cont: Union[Any, str, int], point: Union[str, int] = None,
                         ax: plt.Axes = None, force_axis_lim_update: bool = False, cutoff: float = None, **kwargs
-                        ) -> plt.Axes:
+                        ) -> LineCollection:
         """Plot trajectory of state variables through phase space over time.
 
         Parameters
@@ -439,7 +439,7 @@ class PyAuto:
 
         Returns
         -------
-        plt.Axes
+        LineCollection
         """
 
         # extract information from branch solutions
@@ -509,7 +509,7 @@ class PyAuto:
             raise ValueError('Invalid number of state variables to plot. First argument can only take 2 or 3 state'
                              'variable names as input.')
 
-        return ax
+        return line_col
 
     def plot_timeseries(self, var: str, cont: Union[Any, str, int], points: list = None, ax: plt.Axes = None,
                         linespecs: list = None, **kwargs) -> plt.Axes:
@@ -622,8 +622,7 @@ class PyAuto:
             self._bifurcation_styles.update({bf_type: {'marker': marker, 'color': color}})
 
     def plot_heatmap(self, x: np.array, ax: plt.Axes = None, **kwargs) -> plt.Axes:
-        from seaborn import heatmap
-        return heatmap(x, ax=ax, **kwargs)
+        return plt.imshow(x, ax=ax, **kwargs)
 
     def _create_summary(self, solution: Union[Any, dict], points: list, variables: list, params: list,
                         timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool):
