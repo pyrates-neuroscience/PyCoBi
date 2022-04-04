@@ -50,8 +50,8 @@ class PyAuto:
 
     def run(self, variables: list = None, params: list = None, get_stability: bool = True,
             get_period: bool = False, get_timeseries: bool = False, get_eigenvals: bool = False,
-            get_lyapunov_exp: bool = False, starting_point: Union[str, int] = None, origin: dict = None,
-            bidirectional: bool = False, name: str = None, **auto_kwargs) -> tuple:
+            get_lyapunov_exp: bool = False, starting_point: Union[str, int] = None,
+            origin: Union[int, str, object] = None, bidirectional: bool = False, name: str = None, **auto_kwargs) -> tuple:
         """Wraps auto-07p command `run` and stores requested solution details on instance.
 
         Parameters
