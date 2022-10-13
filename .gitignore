@@ -117,13 +117,3 @@ venv.bak/
 
 # project directory
 .idea/
-
-
-#############################
-### pyannotate file info ####
-#############################
-
-type_info.json
-
-tests/output/
-pyrates_build/

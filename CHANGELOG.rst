@@ -4,6 +4,12 @@ Changelog
 0.6
 ---
 
+0.6.4
+~~~~~
+
+- added possibility to call pytest scripts with auto-07p directory as additional (last) argument
+- updated gitignore
+
 0.6.3
 ~~~~~
 

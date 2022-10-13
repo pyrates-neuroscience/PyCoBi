@@ -24,7 +24,7 @@ jobs:
             cd ..
       - run: pip install --upgrade pip
       - run: pip install .[dev]
-      - run: pytest pycobi_tests/
+      - run: pytest pycobi_tests/test_odesystem.py ~/project/auto-07p
   p37:
     docker:
       - image: cimg/python:3.7.12
