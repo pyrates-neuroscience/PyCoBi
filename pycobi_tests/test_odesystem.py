@@ -35,5 +35,6 @@ def test_1_1_init():
     # parameters
     model = "model_templates.neural_mass_models.qif.qif"
 
-    ode = ODESystem.from_yaml(model, init_cont=False)
+    ode = ODESystem.from_yaml(model, init_cont=False, file_name='qif_equations')
     assert type(ode.results) is dict
+
