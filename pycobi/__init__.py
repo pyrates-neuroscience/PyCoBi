@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 #
 #
-# PyAuto software framework for parameter continuation and automated bifurcation detection. See also:
-# https://github.com/pyrates-neuroscience/PyAuto
+# PyCoBi software framework for parameter continuation and automated bifurcation detection. See also:
+# https://github.com/pyrates-neuroscience/PyCoBi
 #
 # Copyright (C) 2021-2022, Richard Gast.
 #
@@ -31,4 +31,4 @@ __author__ = "Richard Gast"
 __status__ = "Development"
 __version__ = "0.6.0"
 
-from .pyauto import PyAuto
+from .pycobi import ODESystem

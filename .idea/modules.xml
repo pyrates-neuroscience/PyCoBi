@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/PyAuto.iml" filepath="$PROJECT_DIR$/.idea/PyAuto.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/PyCoBi.iml" filepath="$PROJECT_DIR$/.idea/PyCoBi.iml" />
     </modules>
   </component>
 </project>

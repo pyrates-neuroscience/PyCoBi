@@ -24,9 +24,9 @@ with open("VERSION", "r", encoding="utf8") as fh:
 with open("README.md", "r", encoding="utf8") as fh:
     DESCRIPTION = fh.read()
 
-setup(name='pyauto',
+setup(name='pycobi',
       version=VERSION,
-      description='Parameter continuation and bifurcation analysis tool',
+      description='Python tool for parameter continuation and bifurcation analysis',
       long_description=DESCRIPTION,
       author="Richard Gast",
       author_email='richard.gast@northwestern.edu',

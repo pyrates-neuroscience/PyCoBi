@@ -9,7 +9,7 @@ from typing import Union, Any, Optional
 import pickle
 
 
-class PyAuto:
+class ODESystem:
 
     def __init__(self, working_dir: str = None, auto_dir: str = None, init_cont: bool = True, **kwargs) -> None:
         
@@ -68,8 +68,8 @@ class PyAuto:
 
         Returns
         -------
-        PyAuto
-            PyAuto instance.
+        ODESystem
+            PyCoBi instance.
         """
 
         # preparations
@@ -85,7 +85,7 @@ class PyAuto:
         _ = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran", float_precision="float64",
                                   auto=True, vectorize=False, **kwargs)
 
-        # initialize pyauto
+        # initialize pycobi
         return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=func_name, c="c.ivp",
                    **init_kwargs)
 
@@ -122,18 +122,18 @@ class PyAuto:
 
         # extract starting point of continuation
         if 'IRS' in auto_kwargs or 's' in auto_kwargs:
-            raise ValueError('Usage of keyword arguments `IRS` and `s` is disabled in pyauto. To start from a previous'
+            raise ValueError('Usage of keyword arguments `IRS` and `s` is disabled in pycobi. To start from a previous'
                              'solution, use the `starting_point` keyword argument and provide a tuple of branch '
                              'number and point number as returned by the `run` method.')
         if not starting_point and self._last_cont > 0:
             raise ValueError('A starting point is required for further continuation. Either provide a solution to '
-                             'start from via the `starting_point` keyword argument or create a fresh pyauto instance.')
+                             'start from via the `starting_point` keyword argument or create a fresh pycobi instance.')
         if origin is None:
             origin = self._last_cont
         elif type(origin) is str:
             origin = self._results_map[origin]
         elif type(origin) is not int:
-            origin = origin.pyauto_key
+            origin = origin.pycobi_key
 
         # call to auto
         constants = auto_kwargs.pop('c', None)
@@ -169,7 +169,7 @@ class PyAuto:
                                        params=params, timeseries=get_timeseries, stability=get_stability,
                                        period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp)
 
-        # store solution and extracted information in pyauto
+        # store solution and extracted information in pycobi
         ####################################################
 
         # merge auto solutions if necessary and create key for auto solution
@@ -178,21 +178,21 @@ class PyAuto:
 
             # get key from old solution and merge with new solution
             solution_old = self.get_solution(origin)
-            pyauto_key = solution_old.pyauto_key
+            pyauto_key = solution_old.pycobi_key
             solution, summary = self.merge(pyauto_key, solution, summary, new_icp)
 
         elif name == 'bidirect:cont2' and not bidirectional and 'DS' in auto_kwargs and auto_kwargs['DS'] == '-':
 
             # get key from old solution and merge with new solution
             solution_old = self.auto_solutions[self._last_cont]
-            pyauto_key = solution_old.pyauto_key
+            pyauto_key = solution_old.pycobi_key
             solution, summary = self.merge(pyauto_key, solution, summary, new_icp)
 
         else:
 
-            # create pyauto key for solution
+            # create pycobi key for solution
             pyauto_key = self._cont_num + 1 if self._cont_num in self.auto_solutions else self._cont_num
-            solution.pyauto_key = pyauto_key
+            solution.pycobi_key = pyauto_key
 
         # set up dictionary fields in _branches for new solution
         if new_branch not in self._branches:
@@ -200,7 +200,7 @@ class PyAuto:
         elif pyauto_key not in self._branches[new_branch]:
             self._branches[new_branch][pyauto_key] = []
 
-        # store auto solution under unique pyauto cont
+        # store auto solution under unique pycobi cont
         self.auto_solutions[pyauto_key] = solution
         self._last_cont = pyauto_key
         self._branches[new_branch][pyauto_key].append(new_icp)
@@ -229,12 +229,12 @@ class PyAuto:
         Parameters
         ----------
         key
-            PyAuto identifier under which the merged solution should be stored. Must be equal to identifier of first
+            PyCoBi identifier under which the merged solution should be stored. Must be equal to identifier of first
             continuation.
         cont
             auto continuation object that should be merged with the continuation object under `key`.
         summary
-            PyAuto continuation summary that should be merged with continuation summary under `key`.
+            PyCoBi continuation summary that should be merged with continuation summary under `key`.
         icp
             Continuation parameter that was used in both continuations that are to be merged.
         """
@@ -244,9 +244,9 @@ class PyAuto:
 
         # call merge in auto
         solution = self._auto.merge(self.auto_solutions[key] + cont)
-        solution.pyauto_key = key
+        solution.pycobi_key = key
 
-        # store solution in pyauto
+        # store solution in pycobi
         self.auto_solutions[key] = solution
         self._last_cont = solution
 
@@ -278,7 +278,7 @@ class PyAuto:
         return solution, summary_final
 
     def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> dict:
-        """Extract summary of continuation from PyAuto.
+        """Extract summary of continuation from PyCoBi.
 
         Parameters
         ----------
@@ -299,7 +299,7 @@ class PyAuto:
         elif cont is None:
             summary = self.results[self._last_cont]
         else:
-            summary = self.results[cont.pyauto_key]
+            summary = self.results[cont.pycobi_key]
 
         # return continuation or point summary
         if not point:
@@ -396,8 +396,8 @@ class PyAuto:
 
         for key in kwargs:
             if hasattr(self, key):
-                print(f'WARNING: {key} is an attribute of PyAuto instances. To be able to build a new instance of '
-                      f'PyAuto via the `from_file` method from this file, you need to provide a different attribute '
+                print(f'WARNING: {key} is an attribute of PyCoBi instances. To be able to build a new instance of '
+                      f'PyCoBi via the `from_file` method from this file, you need to provide a different attribute '
                       f'name.')
 
         try:
@@ -501,7 +501,7 @@ class PyAuto:
                     time = self.extract(['time'], cont=cont, point=point)['time']
                 except KeyError:
                     raise ValueError("Could not find time variable on solution to apply cutoff to. Please consider "
-                                     "adding the keyword argument `get_timeseries` to the `PyAuto.run()` call for which"
+                                     "adding the keyword argument `get_timeseries` to the `PyCoBi.run()` call for which"
                                      "the phase space trajectory should be plotted.")
             idx = np.where(time > cutoff)
             for key, val in results.items():
@@ -766,7 +766,7 @@ class PyAuto:
                 if type(attr) is dict:
                     attr.update(val)
                 else:
-                    raise AttributeError(f'Attribute {key} is already contained on this PyAuto instance and cannot be '
+                    raise AttributeError(f'Attribute {key} is already contained on this PyCoBi instance and cannot be '
                                          f'set.')
             else:
                 setattr(pyauto_instance, key, val)
@@ -1063,11 +1063,11 @@ class PyAuto:
         return x_min - x_pad, x_max + x_pad
 
 
-def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, Any], pyauto_instance: PyAuto,
+def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, Any], pyauto_instance: ODESystem,
                                 max_iter: int = 1000, iteration: int = 0, precision: int = 3, pds: list = [],
                                 **kwargs) -> tuple:
     """Automatically continue a cascade of period doubling bifurcations. Returns the labels of the continuation and the
-    pyauto instance they were run on.
+    pycobi instance they were run on.
 
     Parameters
     ----------
@@ -1121,7 +1121,7 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
 
 
 def codim2_search(params: list, starting_points: list, origin: Union[str, int, Any],
-                  pyauto_instance: PyAuto, max_recursion_depth: int = 3, recursion: int = 0, periodic: bool = False,
+                  pyauto_instance: ODESystem, max_recursion_depth: int = 3, recursion: int = 0, periodic: bool = False,
                   kwargs_2D_lc_cont: dict = None, kwargs_lc_cont: dict = None, kwargs_2D_cont: dict = None,
                   precision=2, **kwargs) -> dict:
     """Performs automatic continuation of codim 1 bifurcation points in 2 parameters and searches for codimension 2

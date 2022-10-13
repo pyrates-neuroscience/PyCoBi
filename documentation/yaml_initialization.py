@@ -1,5 +1,5 @@
-from pyauto import PyAuto
+from pycobi import ODESystem
 
-a = PyAuto.from_yaml("model_templates.neural_mass_models.qif.qif",
-                     auto_dir="", init_cont=False)
+a = ODESystem.from_yaml("model_templates.neural_mass_models.qif.qif",
+                        auto_dir="", init_cont=False)
 

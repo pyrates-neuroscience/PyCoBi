@@ -1,22 +1,25 @@
-# PyAuto
+# PyCoBi
 
-[![License](https://img.shields.io/github/license/pyrates-neuroscience/PyAuto.svg)](https://github.com/pyrates-neuroscience/PyAuto)
+[![License](https://img.shields.io/github/license/pyrates-neuroscience/PyCoBi.svg)](https://github.com/pyrates-neuroscience/PyCoBi)
 
-<img src="./PyAuto_logo_color.png" width="20%" heigth="20%" align="right">
+<img src="PyCoBi_logo_color.png" width="20%" heigth="20%" align="right">
 
-*PyAuto* is a Python interface to *Auto-07p* [1]. It still requires user-supplied Fortran files for parameter continuations,
-but allows for a more intuitive usage of *Auto-07p* commands within Python scripts. It provides direct access to 
-solutions, branches, and their properties (i.e. special solutions, eigenvalues, etc.) as well as a range of plotting 
+*PyCoBi* is a **Py**thon tool for parameter **co**ntinuations and automated **bi**furcation analysis.
+It provides a Python interface to *Auto-07p* [1], allowing for a more intuitive usage of *Auto-07p* commands within Python scripts. 
+It provides direct access to solutions, branches, and their properties (i.e. special solutions, eigenvalues, etc.) as well as a range of plotting 
 functions to visualize bifurcation diagrams and solutions.
+Finally, it allows to automatically generate the user-supplied Fortran routines via [PyRates](https://github.com/pyrates-neuroscience/PyRates),
+such that *Auto-07p* can be fully used/controlled from within a single Python script, 
+without the need to supply additional non-Python files.
 
 **Use Example:** Use examples will be provided here soon. For now, have a look at the [this example](https://pyrates.readthedocs.io/en/latest/auto_analysis/continuation.html#sphx-glr-auto-analysis-continuation-py)
 which demonstrates how to create the required Fortran files for *Auto-07p* via [PyRates](https://github.com/pyrates-neuroscience/PyRates)
-and use them to run a 1D parameter continuation and bifurcation detection via *PyAuto*.
+and use them to run a 1D parameter continuation and bifurcation detection via *PyCoBi*.
 
 Installation
 ============
 
-To use *PyAuto*, it is required to install [Auto-07p](https://github.com/auto-07p/auto-07p).
+To use *PyCoBi*, it is required to install [Auto-07p](https://github.com/auto-07p/auto-07p).
 You can follow these [installation instructions](https://github.com/auto-07p/auto-07p/tree/master/doc) for detailed 
 information on how to install *Auto-07p* in your specific setup.
 Note that it is not required to manually set any path variables, since *PyAuto* will take care of that for you.  
@@ -52,15 +55,15 @@ After that, in the same directory, execute the following call from within the Py
 python setup.py install
 ```
 
-**Step 5:** Install *PyAuto*
+**Step 5:** Install *PyCoBi*
 
-Use `pip` to install the latest stable version of *PyAuto*
+Use `pip` to install the latest stable version of *PyCoBi*
 
 ```shell
-pip install pyauto
+pip install pycobi
 ```
 
-Alternatively, the development version of *PyAuto* can be installed by cloning the github 
+Alternatively, the development version of *PyCoBi* can be installed by cloning the github 
 repository and using the `setup.py` for installation (see steps 1 and 4). 
 
 References
