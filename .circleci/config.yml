@@ -9,19 +9,19 @@ jobs:
     docker:
       - image: cimg/python:3.6.15
     steps:
-      - run: git clone https://github.com/auto-07p/auto-07p
+      - checkout
       - run:
           command: |
             sudo apt-get update
             sudo apt-get install gfortran libmotif-dev
       - run:
           command: |
+            git clone https://github.com/auto-07p/auto-07p
             cd auto-07p
             ./configure
             make
             python setup.py install
             cd ..
-      - checkout
       - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run: pytest pycobi_tests/
