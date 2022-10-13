@@ -30,6 +30,19 @@ jobs:
       - image: cimg/python:3.7.12
     steps:
       - checkout
+      - run:
+          command: |
+            sudo apt-get update
+            sudo apt-get install gfortran libmotif-dev
+      - run:
+          command: |
+            git clone https://github.com/auto-07p/auto-07p
+            cd auto-07p
+            ./configure
+            make
+            python setup.py install
+            cd ..
+      - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run: pytest pycobi_tests/
   p38:
@@ -37,6 +50,19 @@ jobs:
       - image: cimg/python:3.8.12
     steps:
       - checkout
+      - run:
+          command: |
+            sudo apt-get update
+            sudo apt-get install gfortran libmotif-dev
+      - run:
+          command: |
+            git clone https://github.com/auto-07p/auto-07p
+            cd auto-07p
+            ./configure
+            make
+            python setup.py install
+            cd ..
+      - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run: pytest pycobi_tests/
   p39:
@@ -44,6 +70,19 @@ jobs:
       - image: cimg/python:3.9.10
     steps:
       - checkout
+      - run:
+          command: |
+            sudo apt-get update
+            sudo apt-get install gfortran libmotif-dev
+      - run:
+          command: |
+            git clone https://github.com/auto-07p/auto-07p
+            cd auto-07p
+            ./configure
+            make
+            python setup.py install
+            cd ..
+      - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run: pytest pycobi_tests/
 
@@ -54,3 +93,6 @@ workflows:
     # Inside the workflow, you define the jobs you want to run.
     jobs:
       - p36
+      - p37
+      - p38
+      - p39
