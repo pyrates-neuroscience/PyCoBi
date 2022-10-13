@@ -77,13 +77,14 @@ class ODESystem:
         file_name = kwargs.pop("file_name", "system_equations.f90")
         file_name_full = f"{working_dir}/{file_name}" if working_dir else file_name
         dt = kwargs.pop("step_size", 1e-3)
+        solver = kwargs.pop("solver", "scipy")
         if init_kwargs is None:
             init_kwargs = {}
 
         # generate fortran files
         template = CircuitTemplate.from_yaml(path)
         _ = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran", float_precision="float64",
-                                  auto=True, vectorize=False, **kwargs)
+                                  auto=True, vectorize=False, solver=solver, **kwargs)
 
         # initialize pycobi
         return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=func_name, c="c.ivp",

@@ -10,6 +10,7 @@ Changelog
 - added new badges to the readme
 - added official support for Python 3.9
 - added CircleCI config
+- removed bug from the `ODESystem.from_yaml` method, where the run function was generated for a discrete time-step solver by default
 
 0.6.2
 ~~~~~
