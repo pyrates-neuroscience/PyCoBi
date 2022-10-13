@@ -29,6 +29,6 @@
 
 __author__ = "Richard Gast"
 __status__ = "Development"
-__version__ = "0.6.3-dev0"
+__version__ = "0.6.3"
 
 from .pycobi import ODESystem
