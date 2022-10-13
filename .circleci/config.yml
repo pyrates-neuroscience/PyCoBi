@@ -10,11 +10,13 @@ jobs:
       - image: cimg/python:3.6.15
     steps:
       - run: git clone https://github.com/auto-07p/auto-07p
-      - run: cd auto-07p
-      - run: ./configure
-      - run: make
-      - run: python setup.py install
-      - run: cd ..
+      - run:
+          command: |
+            cd auto-07p
+            ./configure
+            make
+            python setup.py install
+            cd ..
       - checkout
       - run: pip install --upgrade pip
       - run: pip install .[dev]
