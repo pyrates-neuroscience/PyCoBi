@@ -29,6 +29,6 @@
 
 __author__ = "Richard Gast"
 __status__ = "Development"
-__version__ = "0.5.1"
+__version__ = "0.6.0-dev0"
 
 from .pyauto import PyAuto
