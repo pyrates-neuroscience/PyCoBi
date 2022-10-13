@@ -2,7 +2,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+from pyrates import CircuitTemplate
 from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from typing import Union, Any, Optional
@@ -11,7 +11,7 @@ import pickle
 
 class PyAuto:
 
-    def __init__(self, working_dir: str = None, auto_dir: str = None) -> None:
+    def __init__(self, working_dir: str = None, auto_dir: str = None, init_cont: bool = True, **kwargs) -> None:
         
         # make sure that auto-07p environment variables are set
         if 'AUTO_DIR' not in os.environ:
@@ -48,11 +48,54 @@ class PyAuto:
                                     'GH': {'marker': 'o', 'color': '#148F77'}
                                     }
 
+        # perform initial continuation in time to ensure convergence to steady-state solution
+        if init_cont:
+            _ = self.run(ICP=[14], **kwargs)
+
+    @classmethod
+    def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
+                  init_kwargs: dict = None, **kwargs):
+        """
+
+        Parameters
+        ----------
+        path
+        working_dir
+        auto_dir
+        init_cont
+        init_kwargs
+        kwargs
+
+        Returns
+        -------
+        PyAuto
+            PyAuto instance.
+        """
+
+        # preparations
+        func_name = kwargs.pop("func_name", "vector_field")
+        file_name = kwargs.pop("file_name", "system_equations.f90")
+        file_name_full = f"{working_dir}/{file_name}" if working_dir else file_name
+        dt = kwargs.pop("step_size", 1e-3)
+        if init_kwargs is None:
+            init_kwargs = {}
+
+        # generate fortran files
+        template = CircuitTemplate.from_yaml(path)
+        _ = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran", float_precision="float64",
+                                  auto=True, vectorize=False, **kwargs)
+
+        # initialize pyauto
+        return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=func_name, c="c.ivp",
+                   **init_kwargs)
+
     def run(self, variables: list = None, params: list = None, get_stability: bool = True,
             get_period: bool = False, get_timeseries: bool = False, get_eigenvals: bool = False,
             get_lyapunov_exp: bool = False, starting_point: Union[str, int] = None,
-            origin: Union[int, str, object] = None, bidirectional: bool = False, name: str = None, **auto_kwargs) -> tuple:
-        """Wraps auto-07p command `run` and stores requested solution details on instance.
+            origin: Union[int, str, object] = None, bidirectional: bool = False, name: str = None,
+            **auto_kwargs) -> tuple:
+        """
+        Wraps auto-07p command `run` and stores requested solution details on instance.
 
         Parameters
         ----------

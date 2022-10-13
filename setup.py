@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
-INSTALL_REQUIREMENTS = ['numpy',
-                        'matplotlib'
-                        ]
+with open("requirements.txt", "r", encoding="utf8") as fh:
+    REQUIREMENTS = fh.read()
+INSTALL_REQUIREMENTS = REQUIREMENTS
 
 CLASSIFIERS = ["Programming Language :: Python :: 3",
                "Programming Language :: Python :: 3.6",
@@ -15,6 +15,8 @@ CLASSIFIERS = ["Programming Language :: Python :: 3",
                "Intended Audience :: Science/Research",
                "Topic :: Scientific/Engineering",
                ]
+
+EXTRAS = {"dev": ["pytest", "bump2version"]}
 
 with open("VERSION", "r", encoding="utf8") as fh:
     VERSION = fh.read().strip()
@@ -33,6 +35,7 @@ setup(name='pyauto',
       zip_safe=False,
       python_requires='>=3.6',
       install_requires=INSTALL_REQUIREMENTS,
+      extras_require=EXTRAS,
       classifiers=CLASSIFIERS,
       include_package_data=True  # include additional non-python files specified in MANIFEST.in
       )
