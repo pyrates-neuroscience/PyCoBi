@@ -10,7 +10,10 @@ jobs:
       - image: cimg/python:3.6.15
     steps:
       - run: git clone https://github.com/auto-07p/auto-07p
-      - run: sudo apt-get install gfortran
+      - run:
+          command: |
+            sudo apt-get update
+            sudo apt-get install gfortran libmotif-dev
       - run:
           command: |
             cd auto-07p
