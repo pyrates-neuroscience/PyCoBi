@@ -3,6 +3,7 @@
 [![License](https://img.shields.io/github/license/pyrates-neuroscience/PyCoBi.svg)](https://github.com/pyrates-neuroscience/PyCoBi)
 [![Python](https://img.shields.io/pypi/pyversions/pycobi.svg?style=plastic)](https://badge.fury.io/py/pycobi)
 [![PyPI version](https://badge.fury.io/py/pycobi.svg)](https://badge.fury.io/py/pycobi)
+[![CircleCI](https://circleci.com/gh/pyrates-neuroscience/PyCoBi.svg?style=svg)](https://circleci.com/gh/pyrates-neuroscience/PyCoBi)
 
 <img src="PyCoBi_logo_color.png" width="20%" heigth="20%" align="right">
 
