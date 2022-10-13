@@ -26,7 +26,7 @@ def setup_module():
 accuracy = 1e-4
 
 # auto installation directory
-auto_dir = sys.argv[-1] if len(sys.argv) > 2 else "~/PycharmProjects/auto-07p"
+auto_dir = sys.argv[-1] if "auto-07p" in sys.argv[-1] else "~/projects/auto-07p"
 
 # tests
 #######
