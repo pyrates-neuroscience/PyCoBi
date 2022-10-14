@@ -1,6 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+from pandas import DataFrame
 from mpl_toolkits.mplot3d import Axes3D
 from pyrates import CircuitTemplate
 from matplotlib.collections import LineCollection
@@ -30,12 +31,16 @@ class ODESystem:
         # open attributes
         self.auto_solutions = {}
         self.results = {}
+        self._orig_dir = os.getcwd()
+        if working_dir:
+            try:
+                os.chdir(working_dir)
+            except FileNotFoundError:
+                os.chdir(f"{os.getcwd()}/{working_dir}")
+        self.dir = os.getcwd()
 
         # private attributes
-        if working_dir:
-            os.chdir(working_dir)
         self._auto = a
-        self._dir = os.getcwd()
         self._last_cont = 0
         self._cont_num = 0
         self._results_map = {}
@@ -52,9 +57,18 @@ class ODESystem:
         if init_cont:
             _ = self.run(ICP=[14], **kwargs)
 
+    def __getitem__(self, item):
+        try:
+            return self.results[item]
+        except KeyError:
+            return self.results[self._results_map[item]]
+
+    def close_session(self):
+        os.chdir(self._orig_dir)
+
     @classmethod
     def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
-                  init_kwargs: dict = None, **kwargs):
+                  init_kwargs: dict = None, **kwargs) -> tuple:
         """
 
         Parameters
@@ -68,8 +82,8 @@ class ODESystem:
 
         Returns
         -------
-        ODESystem
-            PyCoBi instance.
+        tuple
+            `ODESystem` instance and `CircuitTemplate` instance
         """
 
         # preparations
@@ -81,14 +95,22 @@ class ODESystem:
         if init_kwargs is None:
             init_kwargs = {}
 
-        # generate fortran files
+        # initialize circuit template
         template = CircuitTemplate.from_yaml(path)
+
+        # update circuit template variables
+        if "node_vars" in kwargs:
+            template.update_var(node_vars=kwargs.pop("node_vars"))
+        if "edge_vars" in kwargs:
+            template.update_var(edge_vars=kwargs.pop("edge_vars"))
+
+        # generate fortran files
         _ = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran", float_precision="float64",
                                   auto=True, vectorize=False, solver=solver, **kwargs)
 
-        # initialize pycobi
-        return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=func_name, c="c.ivp",
-                   **init_kwargs)
+        # initialize ODESystem
+        return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=file_name, c="ivp",
+                   **init_kwargs), template
 
     def run(self, variables: list = None, params: list = None, get_stability: bool = True,
             get_period: bool = False, get_timeseries: bool = False, get_eigenvals: bool = False,
@@ -206,7 +228,7 @@ class ODESystem:
         self._last_cont = pyauto_key
         self._branches[new_branch][pyauto_key].append(new_icp)
 
-        self.results[pyauto_key] = summary.copy()
+        self.results[pyauto_key] = DataFrame(summary).T
         self._cont_num = len(self.auto_solutions)
         if name and name != 'bidirect:cont2':
             self._results_map[name] = pyauto_key
@@ -216,13 +238,12 @@ class ODESystem:
 
         if bidirectional:
             auto_kwargs.pop('DS', None)
-            summary, solution = self.run(variables=variables, params=params, get_stability=get_stability,
-                                         get_period=get_period, get_timeseries=get_timeseries,
-                                         get_eigenvals=get_eigenvals, get_lyapunov_exp=get_lyapunov_exp,
-                                         starting_point=starting_point, origin=origin, bidirectional=False,
-                                         name='bidirect:cont2', DS='-', **auto_kwargs)
+            _, solution = self.run(variables=variables, params=params, get_stability=get_stability,
+                                   get_period=get_period, get_timeseries=get_timeseries, get_eigenvals=get_eigenvals,
+                                   get_lyapunov_exp=get_lyapunov_exp, starting_point=starting_point, origin=origin,
+                                   bidirectional=False, name='bidirect:cont2', DS='-', **auto_kwargs)
 
-        return summary.copy(), solution
+        return self.results[pyauto_key], solution
 
     def merge(self, key: int, cont, summary: dict, icp: tuple):
         """Merges two solutions from two separate auto continuations.

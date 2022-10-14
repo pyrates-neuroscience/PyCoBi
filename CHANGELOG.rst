@@ -1,14 +1,21 @@
 Changelog
 =========
 
-0.6
+0.7
 ---
 
-0.6.4
+0.7.0
 ~~~~~
 
-- added possibility to call pytest scripts with auto-07p directory as additional (last) argument
+- summaries of parameter continuations are now stored and returned as `pandas.DataFrame` instances
+- added `ODESystem.__getitem__` method that allows to directly access parameter continuation summaries via their keys
+- added `ODESystem.close_session` method that changes the working directory of the system to the directory prior to initialization of `ODESystem`
+- added possibility to call pytest scripts with auto-07p directory as additional command line argument (--auto_dir)
 - updated gitignore
+- added new tests
+
+0.6
+---
 
 0.6.3
 ~~~~~

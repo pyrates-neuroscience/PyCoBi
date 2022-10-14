@@ -31,4 +31,4 @@ __author__ = "Richard Gast"
 __status__ = "Development"
 __version__ = "0.6.3"
 
-from .pycobi import ODESystem
+from .pycobi import ODESystem, get_from_solutions, continue_period_doubling_bf
