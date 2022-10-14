@@ -299,7 +299,7 @@ class ODESystem:
 
         return solution, summary_final
 
-    def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> dict:
+    def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> DataFrame:
         """Extract summary of continuation from PyCoBi.
 
         Parameters
@@ -309,8 +309,7 @@ class ODESystem:
 
         Returns
         -------
-        dict
-
+        DataFrame
         """
 
         # get continuation summary
@@ -329,15 +328,15 @@ class ODESystem:
         elif type(point) is str:
             n = int(point[2:]) if len(point) > 2 else 1
             i = 1
-            for p, p_info in summary.items():
-                if point[:2] == p_info['bifurcation']:
+            for p in summary.index:
+                if point[:2] == summary.loc[p, 'bifurcation']:
                     if i == n:
-                        return summary[p]
+                        return summary.loc[p, :]
                     i += 1
             else:
                 raise KeyError(f'Invalid point: {point} was not found on continuation {cont}.')
 
-        return summary[point]
+        return summary.loc[point, :]
 
     def get_solution(self, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
         """
@@ -391,12 +390,11 @@ class ODESystem:
 
         return solution_name, s
 
-    def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> dict:
+    def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> DataFrame:
         summary = self.get_summary(cont, point=point)
         if point:
-            return {key: np.asarray(summary[key]) for key in keys}
-        points = np.sort(list(summary))
-        return {key: np.asarray([summary[p][key] for p in points]) for key in keys}
+            return summary.loc[point, keys]
+        return summary.loc[:, keys]
 
     def to_file(self, filename: str, include_auto_results: bool = False, **kwargs) -> None:
         """Save continuation results on disc.

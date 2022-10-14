@@ -8,6 +8,8 @@ Changelog
 ~~~~~
 
 - debugged circle CI config
+- added readthedocs source files
+- improved integration of pycobi and pandas
 
 0.7.0
 ~~~~~
