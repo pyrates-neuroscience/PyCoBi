@@ -3,4 +3,4 @@
 
 
 def pytest_addoption(parser):
-    parser.addoption("--auto_dir", action="store", default="~/PycharmProjects/auto-07p")  #"/home/circleci/project/auto-07p"
+    parser.addoption("--auto_dir", action="store", default="/home/circleci/project/auto-07p")

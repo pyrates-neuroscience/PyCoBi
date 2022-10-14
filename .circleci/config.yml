@@ -24,7 +24,7 @@ jobs:
             cd ..
       - run: pip install --upgrade pip
       - run: pip install .[dev]
-      - run: pytest pycobi_tests/
+      - run: pytest --auto_dir /home/circleci/project/auto-07p pycobi_tests/
   p37:
     docker:
       - image: cimg/python:3.7.12
@@ -44,7 +44,7 @@ jobs:
             cd ..
       - run: pip install --upgrade pip
       - run: pip install .[dev]
-      - run: pytest pycobi_tests/
+      - run: pytest --auto_dir /home/circleci/project/auto-07p pycobi_tests/
   p38:
     docker:
       - image: cimg/python:3.8.12
@@ -64,7 +64,7 @@ jobs:
             cd ..
       - run: pip install --upgrade pip
       - run: pip install .[dev]
-      - run: pytest pycobi_tests/
+      - run: pytest --auto_dir /home/circleci/project/auto-07p pycobi_tests/
   p39:
     docker:
       - image: cimg/python:3.9.10
@@ -84,7 +84,7 @@ jobs:
             cd ..
       - run: pip install --upgrade pip
       - run: pip install .[dev]
-      - run: pytest pycobi_tests/
+      - run: pytest --auto_dir /home/circleci/project/auto-07p pycobi_tests/
 
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
