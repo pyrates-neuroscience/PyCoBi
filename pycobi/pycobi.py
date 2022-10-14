@@ -88,7 +88,7 @@ class ODESystem:
 
         # preparations
         func_name = kwargs.pop("func_name", "vector_field")
-        file_name = kwargs.pop("file_name", "system_equations.f90")
+        file_name = kwargs.pop("file_name", "system_equations")
         file_name_full = f"{working_dir}/{file_name}" if working_dir else file_name
         dt = kwargs.pop("step_size", 1e-3)
         solver = kwargs.pop("solver", "scipy")
@@ -187,7 +187,6 @@ class ODESystem:
         # extract continuation results
         if new_icp[0] == 14:
             get_stability = False
-
         summary = self._create_summary(solution=solution, points=new_points, variables=variables,
                                        params=params, timeseries=get_timeseries, stability=get_stability,
                                        period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp)
@@ -228,7 +227,7 @@ class ODESystem:
         self._last_cont = pyauto_key
         self._branches[new_branch][pyauto_key].append(new_icp)
 
-        self.results[pyauto_key] = DataFrame(summary).T
+        self.results[pyauto_key] = summary
         self._cont_num = len(self.auto_solutions)
         if name and name != 'bidirect:cont2':
             self._results_map[name] = pyauto_key
@@ -245,7 +244,7 @@ class ODESystem:
 
         return self.results[pyauto_key], solution
 
-    def merge(self, key: int, cont, summary: dict, icp: tuple):
+    def merge(self, key: int, cont, summary: DataFrame, icp: tuple):
         """Merges two solutions from two separate auto continuations.
 
         Parameters
@@ -277,27 +276,34 @@ class ODESystem:
 
         summary_old = self.results[key]
 
-        # extract end points and icp values at end points
-        points_old, points_new = list(summary_old), list(summary)
+        # extract end points
+        points_old, points_new = summary_old.index, summary.index
         start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
 
+        # extract ICP values
+        icp_old = summary_old.at[end_old, f"PAR({icp[0]})"]
+        icp_new = summary.at[end_new, f"PAR({icp[0]})"]
+
         # connect starting points of both continuations and re-label points accordingly
-        conts_sorted = [summary, summary_old]
-        new_keys = [points_new[::-1], points_old]
-        old_keys = [points_new, points_old]
-        end_point = end_new
+        if icp_new < icp_old:
+            conts_sorted = [summary, summary_old]
+            keys_sorted = [points_new, points_old]
+        else:
+            conts_sorted = [summary_old, summary]
+            keys_sorted = [points_old, points_new]
+        end_point = keys_sorted[0][-1]
 
         # move points into combined summary
         summary_final = {}
-        for p1, p2 in zip(new_keys[0], old_keys[0]):
-            summary_final[p1] = conts_sorted[0][p2]
-        for p1, p2 in zip(new_keys[1], old_keys[1]):
-            summary_final[p1+end_point] = conts_sorted[1][p2]
+        for p1, p2 in zip(keys_sorted[0], keys_sorted[0][::-1]):
+            summary_final[p1] = conts_sorted[0].loc[p2, :]
+        for p in keys_sorted[1]:
+            summary_final[p+end_point] = conts_sorted[1].loc[p, :]
 
         # store updated summary
-        self.results[key] = summary_final
+        self.results[key] = DataFrame(summary_final).T
 
-        return solution, summary_final
+        return solution, self.results[key]
 
     def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> DataFrame:
         """Extract summary of continuation from PyCoBi.
@@ -473,7 +479,7 @@ class ODESystem:
 
         # plot main continuation
         x, y = results[param], results[var]
-        line_col = self._get_line_collection(x=x, y=y, stability=results['stability'], **kwargs)
+        line_col = self._get_line_collection(x=x.values, y=y.values, stability=results['stability'], **kwargs)
         ax.add_collection(line_col)
         ax.autoscale()
 
@@ -688,7 +694,8 @@ class ODESystem:
         return plt.imshow(x, ax=ax, **kwargs)
 
     def _create_summary(self, solution: Union[Any, dict], points: list, variables: list, params: list,
-                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool):
+                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool
+                        ) -> DataFrame:
         """Creates summary of auto continuation and stores it in dictionary.
 
         Parameters
@@ -705,7 +712,7 @@ class ODESystem:
 
         Returns
         -------
-
+        DataFrame
         """
         summary = {}
         for point in points:
@@ -743,7 +750,7 @@ class ODESystem:
                         if lyapunov_exp:
                             summary[point]['lyapunov_exponents'] = self.get_lyapunov_exponent(evs, p)
 
-        return summary
+        return DataFrame(summary).T
 
     def _call_auto(self, starting_point: Union[str, int], origin: Union[Any, dict], **auto_kwargs) -> Any:
         if starting_point:
@@ -966,7 +973,8 @@ class ODESystem:
             x = np.reshape(x, (x.squeeze().shape[0], 1))
         except IndexError:
             pass
-        if len(y.shape) > 1 and y.shape[1] > 1:
+        if hasattr(y[0], "shape") and y[0].shape[0] > 1:
+            y = np.asarray([y[i] for i in range(y.shape[0])])
             y_max = np.reshape(y.max(axis=1), (y.shape[0], 1))
             y_min = np.reshape(y.min(axis=1), (y.shape[0], 1))
             y_min = np.append(x, y_min, axis=1)
