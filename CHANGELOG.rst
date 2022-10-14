@@ -4,6 +4,11 @@ Changelog
 0.7
 ---
 
+0.7.1
+~~~~~
+
+- debugged circle CI config
+
 0.7.0
 ~~~~~
 
