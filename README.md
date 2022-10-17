@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/pycobi.svg?style=plastic)](https://badge.fury.io/py/pycobi)
 [![PyPI version](https://badge.fury.io/py/pycobi.svg)](https://badge.fury.io/py/pycobi)
 [![CircleCI](https://circleci.com/gh/pyrates-neuroscience/PyCoBi.svg?style=svg)](https://circleci.com/gh/pyrates-neuroscience/PyCoBi)
+[![Documentation Status](https://readthedocs.org/projects/pycobi/badge/?version=latest)](https://pycobi.readthedocs.io/en/latest/?badge=latest)
 
 <img src="PyCoBi_logo_color.png" width="20%" heigth="20%" align="right">
 
