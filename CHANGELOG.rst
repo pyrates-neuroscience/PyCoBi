@@ -4,6 +4,14 @@ Changelog
 0.7
 ---
 
+0.7.2
+~~~~~
+
+- added use example for the QIF-SFA model to the documentation
+- improved support for `pandas.DataFrames` as the main results storage data type
+- added the pyrates model template as an attribute to the `ODESystem`
+- added the option of clearing all generated fortran/auto files via the `ODESystem.close_session()` method
+
 0.7.1
 ~~~~~
 

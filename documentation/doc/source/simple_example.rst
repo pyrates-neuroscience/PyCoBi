@@ -1,6 +1,6 @@
-************************************************
-Parameter continuation and bifurcation detection
-************************************************
+*********************************************************
+Example: Parameter continuation and bifurcation detection
+*********************************************************
 
 In this tutorial, you will learn how to perform a 1D
 `numerical parameter continuation <http://www.scholarpedia.org/article/Numerical_analysis#Numerical_solution_of_
@@ -11,6 +11,7 @@ the quadratic integrate-and-fire population model [1]_, a detailed introduction 
 introductions example gallery. The dynamic equations of this model read the following:
 
 .. math::
+
     \tau \dot r &= \frac{\Delta}{\pi\tau} + 2 r v, \\
     \tau \dot v &= v^2 +\bar \eta + I(t) + J r \tau - (\pi r \tau)^2,
 
@@ -40,7 +41,7 @@ Part 1: Creating an ODESystem Instance
 
 In this first part, we will be concerned with how to create a model representation that is compatible with auto-07p,
 which is the software that is used for parameter continuations and bifurcation analysis in PyCoBi [2]_.
-To this end, we make use of the code generation software `PyRates <>`_, which allows us to generate the Fortran files
+To this end, we make use of the code generation software `PyRates <https://github.com/pyrates-neuroscience/PyRates>`_, which allows us to generate the Fortran files
 required to run auto-07p from `YAML` model definition files.
 The QIF mean-field model comes pre-implemented with `PyRates`, so we can simply point to the ready-to-use `YAML` definition file.
 

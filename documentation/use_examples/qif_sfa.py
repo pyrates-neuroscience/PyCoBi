@@ -42,10 +42,7 @@ simulations with it and visualize the results.
 References
 ^^^^^^^^^^
 
-.. [1] E. Montbrió, D. Pazó, A. Roxin (2015) *Macroscopic description for networks of spiking neurons.* Physical
-       Review X, 5:021028, https://doi.org/10.1103/PhysRevX.5.021028.
-
-.. [2] R. Gast, H. Schmidt, T.R. Knösche (2020) *A Mean-Field Description of Bursting Dynamics in Spiking Neural
+.. [1] R. Gast, H. Schmidt, T.R. Knösche (2020) *A Mean-Field Description of Bursting Dynamics in Spiking Neural
        Networks with Short-Term Adaptation.* Neural Computation 32 (9): 1615-1634, https://doi.org/10.1162/neco_a_01300.
 """
 
@@ -58,10 +55,12 @@ References
 from pycobi import ODESystem
 import numpy as np
 
-ode, _ = ODESystem.from_yaml("model_templates.neural_mass_models.qif.qif_sfa", auto_dir="~/PycharmProjects/auto-07p",
-                             node_vars={'p/qif_sfa_op/Delta': 2.0, 'p/qif_sfa_op/alpha': 1.0, 'p/qif_sfa_op/eta': 3.0},
-                             edge_vars=[('p/qif_sfa_op/r', 'p/qif_sfa_op/r_in', {'weight': 15.0*np.sqrt(2.0)})],
-                             NPR=100, NMX=30000)
+ode = ODESystem.from_yaml(
+    "model_templates.neural_mass_models.qif.qif_sfa", auto_dir="~/PycharmProjects/auto-07p",
+    node_vars={'p/qif_sfa_op/Delta': 2.0, 'p/qif_sfa_op/alpha': 1.0, 'p/qif_sfa_op/eta': 3.0},
+    edge_vars=[('p/qif_sfa_op/r', 'p/qif_sfa_op/r_in', {'weight': 15.0*np.sqrt(2.0)})],
+    NPR=100, NMX=30000
+)
 
 # %%
 # In the code above, we adjusted some default parameters of the model in accordance with the parameters reported
@@ -74,12 +73,12 @@ ode.plot_continuation("PAR(14)", "U(1)", cont=0)
 plt.show()
 
 # %%
-# If the system didn't converge yet, try increasing the paramter :code:`NMX` provided to the :code:`ODESystem.from_yaml`
+# If the system didn't converge yet, try increasing the parameter :code:`NMX` provided to the :code:`ODESystem.from_yaml`
 # method, which controls the number of time integration steps, until the system is assumed to have converged.
 
 # %%
-# Step 2: Parameter continuation of the excitability
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Step 2: 1D parameter continuation of a steady-state solution
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
 # A 1D parameter continuation in :math:`\bar \eta` can be carried out as follows:
 
@@ -94,7 +93,12 @@ eta_sols, eta_cont = ode.run(
 # %%
 # In the above code, we provided all the `auto-07p` meta parameters as keyword arguments. As an alternative, you can
 # create constants file with name :code:`c.name` and provide it to :code:`ODESystem.run` via keyword argument
-# :code:`c=name`.
+# :code:`c=name`. See the `auto-07p documentation <https://github.com/auto-07p/auto-07p/doc>`_ for a detailed explanation
+# of each of these parameters.
+# The following keyword arguments are specific to `PyCoBi` and deviate from standard `auto-07p` syntax:
+# :code:`bidirectional = True` leads to automatic continuation of the solution branch into both directions of the
+# continuation parameter :math:`\bar \eta`. :code:`origin` indicates the key of the solution branch, where a solution with
+# the name :code:`starting_point='EP'` exists, which is used as the starting point of the parameter continuation.
 # We can plot the results of the 1D parameter continuation, to examine the results.
 
 ode.plot_continuation("PAR(4)", "U(1)", cont="eta")
@@ -107,6 +111,11 @@ plt.show()
 # marked by the green circles (`Hopf bifurcations <http://www.scholarpedia.org/article/Andronov-Hopf_bifurcation>`_)
 # and grey triangles (`fold bifurcations <http://www.scholarpedia.org/article/Saddle-node_bifurcation>`_),
 # at which the stability of the solution branch changes.
+
+# %%
+# Step 3: Branch switching at a Hopf bifurcation to the limit cycle solutions
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
 # We know from bifurcation theory that the Hopf bifurcation at :math:`\bar \eta \approx 4` is a subcritical Hopf
 # bifurcation, and that an unstable limit cycle branch must emerge from that bifurcation. We can switch to this branch
 # and continue the limit cycle solution curve as follows.
@@ -119,6 +128,28 @@ hopf_sols, hopf_cont = ode.run(
 # %%
 # Let's visualize the 1D bifurcation diagram again, this time with the limit cycle branch included:
 
-ode.plot_continuation("PAR(4)", "U(1)", cont="eta")
-ode.plot_continuation("PAR(4)", "U(1)", cont="eta_hopf")
+fig, ax = plt.subplots()
+ode.plot_continuation("PAR(4)", "U(1)", cont="eta", ax=ax)
+ode.plot_continuation("PAR(4)", "U(1)", cont="eta_hopf", ax=ax)
 plt.show()
+
+# %%
+# As we can see, the limit cycle solution curve that branches off the Hopf bifurcation is indeed unstable.
+# However, it undergoes a fold-of-limit-cycle bifurcation, giving rise to a stable limit cycle solution branch.
+# During continuation of the limit cycle branch, we set a user point at :math:`\bar \eta = 2.0` via
+# :code:`UZR={4: -2.0}`. In the code below, we integrate the system equations with respect to time to show that the
+# system dynamics are indeed governed by the stable limit cycle solution in that regime.
+
+ode.run(origin=hopf_cont, starting_point="UZ1", c="ivp", name="lc")
+ode.plot_continuation("PAR(14)", "U(1)", cont="lc")
+plt.show()
+
+# %%
+# This concludes our use example. As a final step, we clear all the temporary files we created and make sure all
+# working directory changes that have happened in the background during file creation and parameter continuation are
+# undone. This can be done via a single call:
+
+ode.close_session(clear_files=True)
+
+# %%
+# If you want to keep the Fortran files for future parameter continuations etc., just set :code:`clear_files=False`.

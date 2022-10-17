@@ -1,9 +1,9 @@
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from pandas import DataFrame
+from pandas import DataFrame, MultiIndex
 from mpl_toolkits.mplot3d import Axes3D
-from pyrates import CircuitTemplate
+from pyrates import CircuitTemplate, clear
 from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from typing import Union, Any, Optional
@@ -52,6 +52,7 @@ class ODESystem:
                                     'BT': {'marker': 's', 'color': 'k'},
                                     'GH': {'marker': 'o', 'color': '#148F77'}
                                     }
+        self._temp = kwargs.pop("template", None)
 
         # perform initial continuation in time to ensure convergence to steady-state solution
         if init_cont:
@@ -63,12 +64,18 @@ class ODESystem:
         except KeyError:
             return self.results[self._results_map[item]]
 
-    def close_session(self):
+    @property
+    def pyrates_template(self):
+        return self._temp
+
+    def close_session(self, clear_files: bool = False, **kwargs):
+        if clear_files:
+            clear(self._temp, **kwargs)
         os.chdir(self._orig_dir)
 
     @classmethod
     def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
-                  init_kwargs: dict = None, **kwargs) -> tuple:
+                  init_kwargs: dict = None, **kwargs):
         """
 
         Parameters
@@ -82,8 +89,8 @@ class ODESystem:
 
         Returns
         -------
-        tuple
-            `ODESystem` instance and `CircuitTemplate` instance
+        ODESystem
+            `ODESystem` instance.
         """
 
         # preparations
@@ -110,7 +117,7 @@ class ODESystem:
 
         # initialize ODESystem
         return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=file_name, c="ivp",
-                   **init_kwargs), template
+                   template=template, **init_kwargs)
 
     def run(self, variables: list = None, params: list = None, get_stability: bool = True,
             get_period: bool = False, get_timeseries: bool = False, get_eigenvals: bool = False,
@@ -281,8 +288,8 @@ class ODESystem:
         start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
 
         # extract ICP values
-        icp_old = summary_old.at[end_old, f"PAR({icp[0]})"]
-        icp_new = summary.at[end_new, f"PAR({icp[0]})"]
+        icp_old = summary_old.loc[end_old, f"PAR({icp[0]})"][0]
+        icp_new = summary.loc[end_new, f"PAR({icp[0]})"][0]
 
         # connect starting points of both continuations and re-label points accordingly
         if icp_new < icp_old:
@@ -662,7 +669,7 @@ class ODESystem:
         plt.sca(ax)
 
         # draw bifurcation points
-        for bf, x, y in zip(solution_types, x_vals, y_vals):
+        for bf, x, y in zip(solution_types.values, x_vals.values, y_vals.values):
             if bf not in "EPMXRG" and bf not in ignore:
                 if bf in bf_styles:
                     m = bf_styles[bf]['marker']
@@ -714,43 +721,87 @@ class ODESystem:
         -------
         DataFrame
         """
-        summary = {}
+
+        columns_2d, columns_1d, indices, data_2d, data_1d = [], [], [], [], []
+        add_columns = True
         for point in points:
+
+            data_2d_tmp = []
+            data_1d_tmp = []
 
             # get solution
             solution_type, s = self.get_solution(cont=solution, point=point)
 
             if solution_type != 'No Label' and solution_type != 'MX':
 
-                summary[point] = {}
+                indices.append(point)
 
                 # extract variables and params from solution
                 var_vals = self.get_vars(s, variables, timeseries)
                 param_vals = self.get_params(s, params)
 
-                # store solution information in summary
-                summary[point]['bifurcation'] = solution_type
+                # store solution type
+                data_1d_tmp.append(solution_type)
+                if add_columns:
+                    columns_1d.append('bifurcation')
+
+                # store parameter and variable information
                 branch, _ = self.get_branch_info(s)
                 for var, val in zip(variables, var_vals):
-                    summary[point][var] = val
-                if len(var_vals) > len(variables) and timeseries:
-                    summary[point]['time'] = var_vals[-1]
+                    for i, v in enumerate(val):
+                        data_2d_tmp.append(v)
+                        if add_columns:
+                            columns_2d.append((var, i))
                 for param, val in zip(params, param_vals):
-                    summary[point][param] = val
-                if stability:
-                    summary[point]['stability'] = self.get_stability(solution, s, point)
-                if period or lyapunov_exp or eigenvals:
-                    p = summary[point]['PAR(11)'] if 'PAR(11)' in params else self.get_params(s, ['PAR(11)'])[0]
-                    if period:
-                        summary[point]['period'] = p
-                    if eigenvals or lyapunov_exp:
-                        evs = self.get_eigenvalues(solution, branch, point)
-                        if eigenvals:
-                            summary[point]['eigenvalues'] = evs
-                        if lyapunov_exp:
-                            summary[point]['lyapunov_exponents'] = self.get_lyapunov_exponent(evs, p)
+                    data_1d_tmp.append(val)
+                    if add_columns:
+                        columns_1d.append(param)
 
-        return DataFrame(summary).T
+                # store time information, if requested
+                if len(var_vals) > len(variables) and timeseries:
+                    data_1d_tmp.append(var_vals[-1])
+                    if add_columns:
+                        columns_1d.append('time')
+
+                # store stability information
+                if stability:
+                    data_1d_tmp.append(self.get_stability(solution, s, point))
+                    if add_columns:
+                        columns_1d.append('stability')
+
+                if period or lyapunov_exp or eigenvals:
+                    p = self.get_params(s, ['PAR(11)'])[0]
+
+                # store information about oscillation periods
+                if period:
+                    data_1d_tmp.append(p)
+                    if add_columns:
+                        columns_1d.append('period')
+
+                # store information about local eigenvalues/lyapunov exponents
+                if eigenvals or lyapunov_exp:
+                    evs = self.get_eigenvalues(solution, branch, point)
+                    if eigenvals:
+                        for i, v in enumerate(evs):
+                            data_2d_tmp.append(evs)
+                            if add_columns:
+                                columns_2d.append(('eigenvalues', i))
+                    if lyapunov_exp:
+                        for i, p in enumerate(self.get_lyapunov_exponent(evs, p)):
+                            data_2d_tmp.append(p)
+                            if add_columns:
+                                columns_2d.append(('lyapunov_exponents', i))
+
+            data_2d.append(data_2d_tmp)
+            data_1d.append(data_1d_tmp)
+            add_columns = False
+
+        # arrange data into DataFrame
+        df = DataFrame(data=data_2d, columns=MultiIndex.from_tuples(columns_2d), index=indices)
+        df2 = DataFrame(data=data_1d, columns=columns_1d, index=indices)
+        for i, key in enumerate(columns_1d):
+            df[key] = df2.loc[:, key]
+        return df
 
     def _call_auto(self, starting_point: Union[str, int], origin: Union[Any, dict], **auto_kwargs) -> Any:
         if starting_point:

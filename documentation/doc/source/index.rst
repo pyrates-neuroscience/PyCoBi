@@ -32,6 +32,13 @@ Content
    simple_example
    changelog
 
+.. toctree::
+    :maxdepth: 1
+    :numbered:
+    :caption: Use Examples
+    :hidden:
+
+    use_examples
 
 Reference
 ---------

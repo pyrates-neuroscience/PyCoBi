@@ -44,15 +44,13 @@ def test_1_1_init(auto_dir):
 
     # initialize ODESystem from YAML file
     model = "model_templates.neural_mass_models.qif.qif"
-    ode2, t1 = ODESystem.from_yaml(model, init_cont=False, file_name='qif_eq2', func_name="qif2", auto_dir=auto_dir)
-    ode2.close_session()
-    clear(t1)
+    ode2 = ODESystem.from_yaml(model, init_cont=False, file_name='qif_eq2', func_name="qif2", auto_dir=auto_dir)
+    ode2.close_session(clear_files=True)
 
     # initialize ODESystem from YAML file with different parameters
-    ode3, t2 = ODESystem.from_yaml(model, init_cont=False, file_name='qif_eq3', func_name="qif3", auto_dir=auto_dir,
-                                   node_vars={'p/qif_op/eta': 2.0})
-    ode3.close_session()
-    clear(t2)
+    ode3 = ODESystem.from_yaml(model, init_cont=False, file_name='qif_eq3', func_name="qif3", auto_dir=auto_dir,
+                               node_vars={'p/qif_op/eta': 2.0})
+    ode3.close_session(clear_files=True)
 
     # these tests should pass
     assert isinstance(ode1, ODESystem)
@@ -72,16 +70,14 @@ def test_1_2_run(auto_dir):
 
     # initialize ODESystem from YAML file
     model = "model_templates.neural_mass_models.qif.qif"
-    ode2, t1 = ODESystem.from_yaml(model, init_cont=True, file_name='qif_eq2', func_name="qif2", auto_dir=auto_dir,
-                                   NPR=100, NMX=5000)
-    ode2.close_session()
-    clear(t1)
+    ode2 = ODESystem.from_yaml(model, init_cont=True, file_name='qif_eq2', func_name="qif2", auto_dir=auto_dir,
+                               NPR=100, NMX=5000)
+    ode2.close_session(clear_files=True)
 
     # initialize ODESystem from YAML file with different parameters
-    ode3, t2 = ODESystem.from_yaml(model, init_cont=True, file_name='qif_eq3', func_name="qif3", auto_dir=auto_dir,
-                                   node_vars={'p/qif_op/eta': 2.0}, NPR=100, NMX=5000)
-    ode3.close_session()
-    clear(t2)
+    ode3 = ODESystem.from_yaml(model, init_cont=True, file_name='qif_eq3', func_name="qif3", auto_dir=auto_dir,
+                               node_vars={'p/qif_op/eta': 2.0}, NPR=100, NMX=5000)
+    ode3.close_session(clear_files=True)
 
     # these tests should pass
     assert (ode1[0].loc[:, "U(1)"] - ode2[0].loc[:, "U(1)"]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
