@@ -34,11 +34,19 @@ Content
 
 .. toctree::
     :maxdepth: 1
-    :numbered:
     :caption: Use Examples
     :hidden:
 
     use_examples
+
+.. toctree::
+   :maxdepth: 1
+   :caption: API
+   :hidden:
+
+   pycobi
+   utility
+   continuation
 
 Reference
 ---------

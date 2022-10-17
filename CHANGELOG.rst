@@ -4,6 +4,14 @@ Changelog
 0.7
 ---
 
+0.7.3
+~~~~~
+
+- improved docstrings of all public methods of `ODESystem`
+- moved most static methods of `ODESystem` to a separate `utility` package
+- added API section to readthedocs documentation
+- moved period doubling continuation and automated 2D bifurcation analysis to extra package `automated_continuation`
+
 0.7.2
 ~~~~~
 

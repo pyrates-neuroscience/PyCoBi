@@ -9,10 +9,33 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from typing import Union, Any, Optional
 import pickle
 
+from .utility import get_solution_stability, get_solution_keys, get_branch_info, get_solution_variables, \
+    get_solution_params, get_solution_eigenvalues, get_lyapunov_exponents
+
 
 class ODESystem:
 
+    __slots__ = ["auto_solutions", "results", "_orig_dir", "dir", "_auto", "_last_cont", "_cont_num", "_results_map",
+                 "_branches", "_bifurcation_styles", "_temp"]
+
     def __init__(self, working_dir: str = None, auto_dir: str = None, init_cont: bool = True, **kwargs) -> None:
+        """
+
+        Parameters
+        ----------
+        working_dir
+            Directory in which all the fortran equation and auto-07p constant files are saved.
+        auto_dir
+            Installation directory of auto-07p.
+        init_cont
+            If true, an integration with respect to time will be performed, using the equation file provided via the
+            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
+            and the auto constants provided via the keyword argument `c=<fname>`
+            (a file named `c.<fname>` should exist in `working_dir`).
+        kwargs
+            Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
+            integration.
+        """
         
         # make sure that auto-07p environment variables are set
         if 'AUTO_DIR' not in os.environ:
@@ -81,11 +104,22 @@ class ODESystem:
         Parameters
         ----------
         path
+            Path to a YAML model definition file.
         working_dir
+            Directory in which all the fortran equation and auto-07p constant files are saved.
         auto_dir
+            Installation directory of auto-07p.
         init_cont
+            If true, an integration with respect to time will be performed, using the equation file provided via the
+            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
+            and the auto constants provided via the keyword argument `c=<fname>`
+            (a file named `c.<fname>` should exist in `working_dir`).
         init_kwargs
+            Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
+            integration.
         kwargs
+            Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
+            generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
 
         Returns
         -------
@@ -119,32 +153,106 @@ class ODESystem:
         return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=file_name, c="ivp",
                    template=template, **init_kwargs)
 
-    def run(self, variables: list = None, params: list = None, get_stability: bool = True,
-            get_period: bool = False, get_timeseries: bool = False, get_eigenvals: bool = False,
-            get_lyapunov_exp: bool = False, starting_point: Union[str, int] = None,
-            origin: Union[int, str, object] = None, bidirectional: bool = False, name: str = None,
+    @classmethod
+    def from_file(cls, filename: str, auto_dir: str = None):
+        """Load `ODESystem` from file using pickle.
+
+        Parameters
+        ----------
+        filename
+            Name of the file that contains summary and solution data of an `ODESystem` instance.
+        auto_dir
+            Installation directory of `auto-07p`.
+
+        Returns
+        -------
+        ODESystem
+            ODESystem instance containing all the attributes that are available as dictionary entries in `filename`.
+        """
+        pyauto_instance = cls('', auto_dir=auto_dir, init_cont=False)
+        data = pickle.load(open(filename, 'rb'))
+        for key, val in data.items():
+            if hasattr(pyauto_instance, key):
+                attr = getattr(pyauto_instance, key)
+                if type(attr) is dict:
+                    attr.update(val)
+                else:
+                    raise AttributeError(f'Attribute {key} is already contained on this PyCoBi instance and cannot be '
+                                         f'set.')
+            else:
+                setattr(pyauto_instance, key, val)
+        return pyauto_instance
+
+    def to_file(self, filename: str, results_only: bool = True, **kwargs) -> None:
+        """Save continuation results on disc via pickle.
+
+        Parameters
+        ----------
+        filename
+            Name of the file to which the results should be saved.
+        results_only
+            If true, only the `PyCoBi` recordings will be saved.
+        kwargs
+            Additional data/information to be saved to file. Will be available under the key 'additional_attributes'.
+
+        Returns
+        -------
+        None
+        """
+
+        if results_only:
+            data = {'results': self.results, '_branches': self._branches, '_results_map': self._results_map}
+        else:
+            skip = ["dir", "_orig_dir"]
+            data = {key: getattr(self, key) for key in self.__slots__ if key not in skip}
+        data.update({'additional_attributes': kwargs})
+
+        try:
+            pickle.dump(data, open(filename, 'x'))
+        except (FileExistsError, TypeError):
+            pickle.dump(data, open(filename, 'wb'))
+
+    def run(self, origin: Union[int, str, object] = None, starting_point: Union[str, int] = None, variables: list = None,
+            params: list = None, get_stability: bool = True, get_period: bool = False, get_timeseries: bool = False,
+            get_eigenvals: bool = False, get_lyapunov_exp: bool = False, bidirectional: bool = False, name: str = None,
             **auto_kwargs) -> tuple:
         """
         Wraps auto-07p command `run` and stores requested solution details on instance.
 
         Parameters
         ----------
-        variables
-        params
-        get_stability
-        get_period
-        get_timeseries
-        get_eigenvals
-        get_lyapunov_exp
-        starting_point
         origin
+            Key of the solution branch that contains the solution `starting_point`, from which the new continuation will
+            be started.
+        starting_point
+            Key of the solution on the solution branch `origin`, from which the continuation procedure will be initiated.
+        variables
+            Keys of the state variables that should be recorded for each continuation recording step.
+        params
+            Keys of the parameters that should be recorded for each continuation recording step.
+        get_stability
+            If true, the stability of each solution will be stored in the results under the key 'stability'.
+        get_period
+            If true, the period of periodic solutions will be stored in the results under the key 'period'.
+        get_timeseries
+            If true, the time vector associated with the state variables of a periodic solution will be stored under the
+            key 'time'.
+        get_eigenvals
+            If true, the eigenvalues (floquet multipliers) or steady-state (periodic) solutions will be stored under the
+            key 'eigenvalues'.
+        get_lyapunov_exp
+            If true, the local lyapunov exponents of solutions will be stored under the key 'lyapunov'.
         bidirectional
+            If true, parameter continuation will be performed into both directions for a given continuation parameter.
         name
+            Name, under which the resulting solution branch will be accessible for future continuations.
         auto_kwargs
+            Additional keyword arguments to be passed to the auto command `run`.
 
         Returns
         -------
         tuple
+            DataFrame with the results, auto solution branch object.
         """
 
         # auto call
@@ -156,8 +264,8 @@ class ODESystem:
                              'solution, use the `starting_point` keyword argument and provide a tuple of branch '
                              'number and point number as returned by the `run` method.')
         if not starting_point and self._last_cont > 0:
-            raise ValueError('A starting point is required for further continuation. Either provide a solution to '
-                             'start from via the `starting_point` keyword argument or create a fresh pycobi instance.')
+            raise ValueError('A starting point is required for further continuation. Either provide a solution to start'
+                             ' from via the `starting_point` keyword argument or create a fresh `ODESystem` instance.')
         if origin is None:
             origin = self._last_cont
         elif type(origin) is str:
@@ -177,8 +285,8 @@ class ODESystem:
         ########################################
 
         # extract branch and solution info
-        new_branch, new_icp = self.get_branch_info(solution)
-        new_points = self.get_solution_keys(solution)
+        new_branch, new_icp = get_branch_info(solution)
+        new_points = get_solution_keys(solution)
 
         # get all passed variables and params
         _, solution_tmp = self.get_solution(point=new_points[0], cont=solution)
@@ -244,10 +352,10 @@ class ODESystem:
 
         if bidirectional:
             auto_kwargs.pop('DS', None)
-            _, solution = self.run(variables=variables, params=params, get_stability=get_stability,
-                                   get_period=get_period, get_timeseries=get_timeseries, get_eigenvals=get_eigenvals,
-                                   get_lyapunov_exp=get_lyapunov_exp, starting_point=starting_point, origin=origin,
-                                   bidirectional=False, name='bidirect:cont2', DS='-', **auto_kwargs)
+            _, solution = self.run(origin, starting_point, variables=variables, params=params,
+                                   get_stability=get_stability, get_period=get_period, get_timeseries=get_timeseries,
+                                   get_eigenvals=get_eigenvals, get_lyapunov_exp=get_lyapunov_exp, bidirectional=False,
+                                   name='bidirect:cont2', DS='-', **auto_kwargs)
 
         return self.results[pyauto_key], solution
 
@@ -318,11 +426,14 @@ class ODESystem:
         Parameters
         ----------
         cont
+            Key of the solution branch.
         point
+            Key of the solution on the branch.
 
         Returns
         -------
         DataFrame
+            All recorded state variables, parameters, etc. for the solution/solution branch.
         """
 
         # get continuation summary
@@ -351,17 +462,20 @@ class ODESystem:
 
         return summary.loc[point, :]
 
-    def get_solution(self, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
-        """
+    def get_solution(self, cont: Union[Any, str, int], point: Union[str, int] = None) -> Union[Any, tuple]:
+        """Extract auto solution object of a given solution/solution branch.
 
         Parameters
         ----------
         cont
+            Key of the solution branch.
         point
+            Key of the solution on the branch.
 
         Returns
         -------
-
+        Union[Any, tuple]
+            Solution type (only if `point` is provided), auto solution object.
         """
 
         # extract continuation object
@@ -369,7 +483,7 @@ class ODESystem:
             cont = self.auto_solutions[cont]
         elif type(cont) is str:
             cont = self.auto_solutions[self._results_map[cont]]
-        branch, icp = self.get_branch_info(cont)
+        branch, icp = get_branch_info(cont)
 
         if point is None:
             return cont
@@ -404,56 +518,50 @@ class ODESystem:
         return solution_name, s
 
     def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> DataFrame:
+        """Extract properties from a solution.
+
+        Parameters
+        ----------
+        keys
+            Keys of the properties (e.g. state variable names, parameter names, ...).
+        cont
+            Key of the solution branch.
+        point
+            Key of the solution on the branch.
+
+        Returns
+        -------
+        DataFrame
+            Contains the requested properties of the solution.
+        """
         summary = self.get_summary(cont, point=point)
         if point:
             return summary.loc[point, keys]
         return summary.loc[:, keys]
 
-    def to_file(self, filename: str, include_auto_results: bool = False, **kwargs) -> None:
-        """Save continuation results on disc.
-
-        Parameters
-        ----------
-        filename
-        include_auto_results
-
-        Returns
-        -------
-        None
-        """
-
-        data = {'results': self.results, '_branches': self._branches, '_results_map': self._results_map}
-        if include_auto_results:
-            data['auto_solutions'] = self.auto_solutions
-        data.update({'additional_attributes': kwargs})
-
-        for key in kwargs:
-            if hasattr(self, key):
-                print(f'WARNING: {key} is an attribute of PyCoBi instances. To be able to build a new instance of '
-                      f'PyCoBi via the `from_file` method from this file, you need to provide a different attribute '
-                      f'name.')
-
-        try:
-            pickle.dump(data, open(filename, 'x'))
-        except (FileExistsError, TypeError):
-            pickle.dump(data, open(filename, 'wb'))
-
-    def plot_continuation(self, param: str, var: str, cont: Union[Any, str, int], ax: plt.Axes = None,
+    def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
                           force_axis_lim_update: bool = False, **kwargs) -> LineCollection:
-        """Line plot of 1D/2D parameter continuation and the respective codimension 1/2 bifurcations.
+        """Line plot of 1D/2D parameter continuations and the respective codimension 1/2 bifurcations.
 
         Parameters
         ----------
-        param
-        var
+        x
+            Key of the parameter/variable plotted on the x-axis.
+        y
+            Key of the variable/parameter plotted on the y-axis.
         cont
+            Key of the solution branch to be plotted.
         ax
+            Axis in which to plot the data. If not provided, a new figure will be created.
         force_axis_lim_update
+            If true, the axis limits of x and y axis will be updated after creating the line plots.
         kwargs
+            Additional keyword arguments that allow to control the appearance of the line plot.
 
         Returns
         -------
         LineCollection
+            Line object that was created.
         """
 
         if ax is None:
@@ -463,19 +571,19 @@ class ODESystem:
         axislim_pad = kwargs.pop('axislimpad', 0)
 
         # extract information from branch solutions
-        if param == 'PAR(14)':
-            results = self.extract([param, var], cont=cont)
+        if x == 'PAR(14)':
+            results = self.extract([x, y], cont=cont)
             results['stability'] = np.asarray([True] * len(results['PAR(14)']))
             results['bifurcation'] = np.asarray(['RG'] * len(results['PAR(14)']))
         else:
-            results = self.extract([param, var, 'stability', 'bifurcation'], cont=cont)
+            results = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
 
         # plot bifurcation points
         bifurcation_point_kwargs = ['default_color', 'default_marker', 'default_size', 'custom_bf_styles',
                                     'ignore']
         kwargs_tmp = {key: kwargs.pop(key) for key in bifurcation_point_kwargs if key in kwargs}
-        ax = self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[param],
-                                          y_vals=results[var], ax=ax, **kwargs_tmp)
+        ax = self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[x],
+                                          y_vals=results[y], ax=ax, **kwargs_tmp)
 
         # set title variable if passed
         tvar = kwargs.pop('title_var', None)
@@ -485,44 +593,52 @@ class ODESystem:
             ax.set_title(f"{tvar} = {tval}")
 
         # plot main continuation
-        x, y = results[param], results[var]
-        line_col = self._get_line_collection(x=x.values, y=y.values, stability=results['stability'], **kwargs)
+        x_data, y_data = results[x], results[y]
+        line_col = self._get_line_collection(x=x_data.values, y=y_data.values, stability=results['stability'], **kwargs)
         ax.add_collection(line_col)
         ax.autoscale()
 
         # cosmetics
         ax.tick_params(axis='both', which='major', pad=tick_pad)
-        ax.set_xlabel(param, labelpad=label_pad)
-        ax.set_ylabel(var, labelpad=label_pad)
-        self._update_axis_lims(ax, ax_data=[x, y], padding=axislim_pad, force_update=force_axis_lim_update)
+        ax.set_xlabel(x, labelpad=label_pad)
+        ax.set_ylabel(y, labelpad=label_pad)
+        self._update_axis_lims(ax, ax_data=[x_data, y_data], padding=axislim_pad, force_update=force_axis_lim_update)
 
         return line_col
 
-    def plot_trajectory(self, vars: Union[list, tuple], cont: Union[Any, str, int], point: Union[str, int] = None,
+    def plot_trajectory(self, variables: Union[list, tuple], cont: Union[Any, str, int], point: Union[str, int] = None,
                         ax: plt.Axes = None, force_axis_lim_update: bool = False, cutoff: float = None, **kwargs
                         ) -> LineCollection:
         """Plot trajectory of state variables through phase space over time.
 
         Parameters
         ----------
-        vars
+        variables
+            State variables for which to create the trajectory. If 2, a 2D plot will be created, if 3, a 3D plot.
         cont
+            Key of the solution branch to be plotted.
         point
+            Key of the solution on the solution branch for which to plot the trajectories.
         ax
+            Axis in which to plot the data. If not provided, a new figure will be created.
         force_axis_lim_update
+            If true, the axis limits of x and y axis will be updated after creating the line plots.
         cutoff
+            Initial time to be disregarded for plotting.
         kwargs
+            Additional keyword arguments that allow to control the appearance of the line plot.
 
         Returns
         -------
         LineCollection
+            Line object that was created.
         """
 
         # extract information from branch solutions
         try:
-            results = self.extract(list(vars) + ['stability'], cont=cont, point=point)
+            results = self.extract(list(variables) + ['stability'], cont=cont, point=point)
         except KeyError:
-            results = self.extract(list(vars), cont=cont, point=point)
+            results = self.extract(list(variables), cont=cont, point=point)
             results['stability'] = None
 
         # apply cutoff, if passed
@@ -541,23 +657,23 @@ class ODESystem:
                 if hasattr(val, 'shape') and val.shape:
                     results[key] = val[idx]
 
-        if len(vars) == 2:
+        if len(variables) == 2:
 
             # create 2D plot
             if ax is None:
                 fig, ax = plt.subplots()
 
             # plot phase trajectory
-            line_col = self._get_line_collection(x=results[vars[0]], y=results[vars[1]], stability=results['stability'],
-                                                 **kwargs)
+            line_col = self._get_line_collection(x=results[variables[0]], y=results[variables[1]],
+                                                 stability=results['stability'], **kwargs)
             ax.add_collection(line_col)
             ax.autoscale()
 
             # cosmetics
-            ax.set_xlabel(vars[0])
-            ax.set_ylabel(vars[1])
+            ax.set_xlabel(variables[0])
+            ax.set_ylabel(variables[1])
 
-        elif len(vars) == 3:
+        elif len(variables) == 3:
 
             # create 3D plot
             if ax is None:
@@ -568,16 +684,16 @@ class ODESystem:
             axislim_pad = kwargs.pop('axislimpad', 0.1)
 
             # plot phase trajectory
-            x, y, z = results[vars[0]], results[vars[1]], results[vars[2]]
+            x, y, z = results[variables[0]], results[variables[1]], results[variables[2]]
             line_col = self._get_3d_line_collection(x=x, y=y, z=z, stability=results['stability'], **kwargs)
             ax.add_collection3d(line_col)
             ax.autoscale()
 
             # cosmetics
             ax.tick_params(axis='both', which='major', pad=tick_pad)
-            ax.set_xlabel(vars[0], labelpad=label_pad)
-            ax.set_ylabel(vars[1], labelpad=label_pad)
-            ax.set_zlabel(vars[2], labelpad=label_pad)
+            ax.set_xlabel(variables[0], labelpad=label_pad)
+            ax.set_ylabel(variables[1], labelpad=label_pad)
+            ax.set_zlabel(variables[2], labelpad=label_pad)
             self._update_axis_lims(ax, [x, y, z], padding=axislim_pad, force_update=force_axis_lim_update)
 
         else:
@@ -589,20 +705,27 @@ class ODESystem:
 
     def plot_timeseries(self, var: str, cont: Union[Any, str, int], points: list = None, ax: plt.Axes = None,
                         linespecs: list = None, **kwargs) -> plt.Axes:
-        """
+        """Plot state variable of a periodic solution over time.
 
         Parameters
         ----------
         var
+            Key of the state variable.
         cont
+            Key of the solution branch.
         points
+            List with keys of the solutions for which to create time series plots.
         ax
+            Axis in which to plot the data. If not provided, a new figure will be created.
         linespecs
+            Keyword arguments that control the appearance of the line created for each entry in `points`.
         kwargs
+            Additional keyword arguments that control the appearance of the plot.
 
         Returns
         -------
-
+        plt.Axes
+            Axis object that contains the plotted timeseries.
         """
 
         # extract information from branch solutions
@@ -637,25 +760,36 @@ class ODESystem:
 
         return ax
 
-    def plot_bifurcation_points(self, solution_types, x_vals, y_vals, ax, default_color='k', default_marker='*',
-                                default_size=50, ignore=None, custom_bf_styles=None):
-        """
+    def plot_bifurcation_points(self, solution_types: DataFrame, x_vals: DataFrame, y_vals: DataFrame, ax: plt.Axes,
+                                default_color: str = 'k', default_marker: str = '*', default_size: float = 50,
+                                ignore: list = None, custom_bf_styles: dict = None) -> plt.Axes:
+        """Plot markers for special solutions at coordinates in 2D space.
 
         Parameters
         ----------
         solution_types
+            Type of each solution, entries of DataFrame should be strings.
         x_vals
+            X-coordinates of each solution.
         y_vals
+            Y-coordinates of each special solution
         ax
+            Axis in which to plot the data. If not provided, a new figure will be created.
         default_color
+            Default color to be used if bifurcation style is not known.
         default_marker
+            Default marker style to be used if bifurcation style is not known.
         default_size
+            Default marker size.
         ignore
+            List of solution types that should not be displayed.
         custom_bf_styles
+            Dictionary containing adjustments to the default bifurcation markers and colors.
 
         Returns
         -------
-
+        plt.Axes
+            Axis object that contains the plotted special solutions.
         """
 
         if not ignore:
@@ -684,7 +818,23 @@ class ODESystem:
                     plt.scatter(x, y, s=default_size, marker=m, c=c)
         return ax
 
-    def update_bifurcation_style(self, bf_type: str, marker: str = None, color: str = None):
+    def update_bifurcation_style(self, bf_type: str, marker: str = None, color: str = None) -> None:
+        """Update the default marker and color of a given special solution type.
+
+        Parameters
+        ----------
+        bf_type
+            Type of the special solution.
+        marker
+            New marker type.
+        color
+            New color.
+
+        Returns
+        -------
+        None
+        """
+
         if bf_type in self._bifurcation_styles:
             if marker:
                 self._bifurcation_styles[bf_type]['marker'] = marker
@@ -696,9 +846,6 @@ class ODESystem:
             if color is None:
                 color = 'k'
             self._bifurcation_styles.update({bf_type: {'marker': marker, 'color': color}})
-
-    def plot_heatmap(self, x: np.array, ax: plt.Axes = None, **kwargs) -> plt.Axes:
-        return plt.imshow(x, ax=ax, **kwargs)
 
     def _create_summary(self, solution: Union[Any, dict], points: list, variables: list, params: list,
                         timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool
@@ -737,8 +884,8 @@ class ODESystem:
                 indices.append(point)
 
                 # extract variables and params from solution
-                var_vals = self.get_vars(s, variables, timeseries)
-                param_vals = self.get_params(s, params)
+                var_vals = get_solution_variables(s, variables, timeseries)
+                param_vals = get_solution_params(s, params)
 
                 # store solution type
                 data_1d_tmp.append(solution_type)
@@ -746,7 +893,7 @@ class ODESystem:
                     columns_1d.append('bifurcation')
 
                 # store parameter and variable information
-                branch, _ = self.get_branch_info(s)
+                branch, _ = get_branch_info(s)
                 for var, val in zip(variables, var_vals):
                     for i, v in enumerate(val):
                         data_2d_tmp.append(v)
@@ -765,12 +912,12 @@ class ODESystem:
 
                 # store stability information
                 if stability:
-                    data_1d_tmp.append(self.get_stability(solution, s, point))
+                    data_1d_tmp.append(get_solution_stability(solution, s, point))
                     if add_columns:
                         columns_1d.append('stability')
 
                 if period or lyapunov_exp or eigenvals:
-                    p = self.get_params(s, ['PAR(11)'])[0]
+                    p = get_solution_params(s, ['PAR(11)'])[0]
 
                 # store information about oscillation periods
                 if period:
@@ -780,14 +927,14 @@ class ODESystem:
 
                 # store information about local eigenvalues/lyapunov exponents
                 if eigenvals or lyapunov_exp:
-                    evs = self.get_eigenvalues(solution, branch, point)
+                    evs = get_solution_eigenvalues(solution, branch, point)
                     if eigenvals:
                         for i, v in enumerate(evs):
                             data_2d_tmp.append(evs)
                             if add_columns:
                                 columns_2d.append(('eigenvalues', i))
                     if lyapunov_exp:
-                        for i, p in enumerate(self.get_lyapunov_exponent(evs, p)):
+                        for i, p in enumerate(get_lyapunov_exponents(evs, p)):
                             data_2d_tmp.append(p)
                             if add_columns:
                                 columns_2d.append(('lyapunov_exponents', i))
@@ -823,164 +970,6 @@ class ODESystem:
                 min_val, max_val = np.min([min_val, axis_limits[0]]), np.max([max_val, axis_limits[1]])
             eval(f"ax.set_{ax_names[i]}lim(min_val, max_val)")
 
-    @classmethod
-    def from_file(cls, filename: str, auto_dir: str = None) -> Any:
-        """
-
-        Parameters
-        ----------
-        filename
-        auto_dir
-
-        Returns
-        -------
-        Any
-        """
-        pyauto_instance = cls('', auto_dir=auto_dir)
-        data = pickle.load(open(filename, 'rb'))
-        for key, val in data.items():
-            if hasattr(pyauto_instance, key):
-                attr = getattr(pyauto_instance, key)
-                if type(attr) is dict:
-                    attr.update(val)
-                else:
-                    raise AttributeError(f'Attribute {key} is already contained on this PyCoBi instance and cannot be '
-                                         f'set.')
-            else:
-                setattr(pyauto_instance, key, val)
-        return pyauto_instance
-
-    @staticmethod
-    def get_stability(solution, s, point) -> bool:
-
-        point_idx = get_point_idx(solution[0].diagnostics.data, point=point)
-        diag = solution[0].diagnostics.data[point_idx]['Text']
-
-        if "Eigenvalues" in diag:
-            diag_line = "Eigenvalues  :   Stable:"
-        elif "Multipliers" in diag:
-            diag_line = "Multipliers:     Stable:"
-        else:
-            return s.b['solution'].b['PT'] < 0
-        idx = diag.find(diag_line) + len(diag_line)
-        value = int(diag[idx:].split("\n")[0])
-        target = s.data['NDIM']
-        return value >= target
-
-    @staticmethod
-    def get_solution_keys(solution: Any) -> list:
-        keys = []
-        for idx in range(len(solution.data)):
-            keys += [key for key, val in solution[idx].labels.by_index.items()
-                     if val and 'solution' in tuple(val.values())[0]]
-        return keys
-
-    @staticmethod
-    def get_branch_info(solution: Any) -> tuple:
-        try:
-            branch, icp = solution[0].BR, solution[0].c['ICP']
-        except (AttributeError, ValueError):
-            try:
-                branch, icp = solution['BR'], solution.c['ICP']
-            except AttributeError:
-                icp = solution[0].c['ICP']
-                i = 0
-                while i < 10:
-                    try:
-                        sol_key = list(solution[0].labels.by_index.keys())[i]
-                        branch = solution[0].labels.by_index[sol_key]['RG']['solution']['data']['BR']
-                        break
-                    except KeyError as e:
-                        i += 1
-                        if i == 10:
-                            raise e
-        icp = (icp,) if type(icp) is int else tuple(icp)
-        return branch, icp
-
-    @staticmethod
-    def get_vars(solution: Any, vars: list, extract_timeseries: bool = False) -> list:
-        if hasattr(solution, 'b') and extract_timeseries:
-            solution = solution.b['solution']
-            solutions = [solution.indepvararray]
-        else:
-            solutions = []
-        solutions = [solution[v] for v in vars] + solutions
-        return solutions
-
-    @staticmethod
-    def get_params(solution, params):
-        if hasattr(solution, 'b'):
-            solution = solution.b['solution']
-        return [solution[p] for p in params]
-
-    @staticmethod
-    def get_eigenvalues(solution, branch: int, point: int) -> list:
-        """extracts eigenvalue spectrum from a solution point on a branch of solution
-
-        Parameters
-        ----------
-        solution
-        branch
-        point
-
-        Returns
-        -------
-        list
-            List of eigenvalues. If solution is periodic, the list contains floquet multipliers instead of eigenvalues.
-        """
-
-        eigenvals = []
-
-        # extract point index from diagnostics
-        point_idx = get_point_idx(solution[0].diagnostics, point=point)
-        diag = solution[0].diagnostics.data[point_idx]['Text']
-
-        if "NOTE:No converge" in diag:
-            return eigenvals
-
-        # find index of line in diagnostic output where eigenvalue information are starting
-        idx = diag.find('Stable:')
-        if not idx:
-            return eigenvals
-        diag = diag[idx:]
-        diag_split = diag.split("\n")
-
-        # check whether branch and point identifiers match the targets
-        branch_str = f' {branch} '
-        point_str = f' {point+1} '
-        if branch_str in diag_split[1] and point_str in diag_split[1] and \
-                ('Eigenvalue' in diag_split[1] or 'Multiplier' in diag_split[1]):
-
-            # go through lines of system diagnostics and extract eigenvalues/floquet multipliers
-            i = 1
-            while i < len(diag_split):
-
-                diag_tmp = diag_split[i]
-                diag_tmp_split = [d for d in diag_tmp.split(' ') if d != ''][2:]
-
-                # check whether line contains eigenvals or floquet mults. If not, stop while loop.
-                if not diag_tmp_split:
-                    break
-                if 'Eigenvalue' not in diag_tmp_split[0] and 'Multiplier' not in diag_tmp_split[0]:
-                    break
-
-                # extract eigenvalues/floquet multipliers
-                try:
-                    idx2 = diag_tmp_split.index(f"{i}")
-                except ValueError:
-                    idx2 = diag_tmp_split.index(f"{i}:")
-                real = float(diag_tmp_split[idx2+1])
-                imag = float(diag_tmp_split[idx2+2])
-                eigenvals.append(complex(real, imag))
-
-                i += 1
-
-        return eigenvals
-
-    @staticmethod
-    def get_lyapunov_exponent(eigenvals, period):
-        return [np.real(np.log(ev)/period) if period else np.real(ev) for ev in eigenvals]
-
     @staticmethod
     def _get_all_var_keys(solution):
         return [f'U({i+1})' for i in range(solution['NDIM'])]
@@ -991,7 +980,7 @@ class ODESystem:
 
     def _start_from_solution(self, solution: Any) -> Any:
         diag = str(solution[0].diagnostics)
-        sol_keys = self.get_solution_keys(solution)
+        sol_keys = get_solution_keys(solution)
         if 'Starting direction of the free parameter(s)' in diag and len(sol_keys) == 1 and \
                 "EP" in list(solution[0].labels.by_index[sol_keys[0]])[0]:
             _, s = solution[0].labels.by_index.popitem()
@@ -1140,275 +1129,3 @@ class ODESystem:
         x_min, x_max = x.min(), x.max()
         x_pad = (x_max - x_min) * padding
         return x_min - x_pad, x_max + x_pad
-
-
-def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, Any], pyauto_instance: ODESystem,
-                                max_iter: int = 1000, iteration: int = 0, precision: int = 3, pds: list = [],
-                                **kwargs) -> tuple:
-    """Automatically continue a cascade of period doubling bifurcations. Returns the labels of the continuation and the
-    pycobi instance they were run on.
-
-    Parameters
-    ----------
-    solution
-    continuation
-    pyauto_instance
-    max_iter
-    iteration
-    precision
-    pds
-    kwargs
-
-    Returns
-    -------
-    tuple
-    """
-    solutions = []
-    params = kwargs['ICP']
-    i = 1
-    name = f'pd_{iteration}'
-    solutions.append(name)
-
-    if iteration >= max_iter:
-        return solutions, pyauto_instance
-
-    for point, point_info in solution.items():
-
-        if 'PD' in point_info['bifurcation']:
-
-            s_tmp, cont = pyauto_instance.run(starting_point=f'PD{i}', name=name, origin=continuation,
-                                              **kwargs)
-            bfs = get_from_solutions(['bifurcation', f'PAR({params[0]})', f'PAR({params[1]})'], s_tmp)
-
-            for bf, p1, p2 in bfs:
-
-                param_pos = np.round([p1, p2], decimals=precision)
-
-                if "PD" in bf and not any([p[0] == param_pos[0] and p[1] == param_pos[1] for p in pds]):
-
-                    pds.append(param_pos)
-                    s_tmp2, pyauto_instance = continue_period_doubling_bf(solution=s_tmp, continuation=cont,
-                                                                          pyauto_instance=pyauto_instance,
-                                                                          iteration=iteration + 1,
-                                                                          precision=precision, pds=pds,
-                                                                          **kwargs)
-                    solutions += s_tmp2
-                    iteration += len(s_tmp2)
-            i += 1
-
-    return solutions, pyauto_instance
-
-
-def codim2_search(params: list, starting_points: list, origin: Union[str, int, Any],
-                  pyauto_instance: ODESystem, max_recursion_depth: int = 3, recursion: int = 0, periodic: bool = False,
-                  kwargs_2D_lc_cont: dict = None, kwargs_lc_cont: dict = None, kwargs_2D_cont: dict = None,
-                  precision=2, **kwargs) -> dict:
-    """Performs automatic continuation of codim 1 bifurcation points in 2 parameters and searches for codimension 2
-    bifurcations along the solution curves.
-
-    Parameters
-    ----------
-    params
-    starting_points
-    origin
-    pyauto_instance
-    max_recursion_depth
-    recursion
-    periodic
-    kwargs_2D_lc_cont
-    kwargs_lc_cont
-    kwargs_2D_cont
-    precision
-    kwargs
-
-    Returns
-    -------
-
-    """
-
-    zhs, ghs, bts = dict(), dict(), dict()
-    continuations = dict()
-    name = kwargs.pop('name', f"{params[0]}/{params[1]}")
-
-    for p in starting_points:
-
-        # continue curve of special solutions in 2 parameters
-        kwargs_tmp = kwargs.copy()
-        if periodic:
-            kwargs_tmp.update({'ILP': 0, 'IPS': 2, 'ISW': 2, 'ISP': 2, 'ICP': list(params) + [11]})
-            if kwargs_2D_lc_cont:
-                kwargs_tmp.update(kwargs_2D_lc_cont)
-        else:
-            kwargs_tmp.update({'ILP': 0, 'IPS': 1, 'ISW': 2, 'ISP': 2, 'ICP': params})
-            if kwargs_2D_cont:
-                kwargs_tmp.update(kwargs_2D_cont)
-
-        name_tmp = f"{name}:{p}"
-        sols, cont = pyauto_instance.run(starting_point=p, origin=origin, name=name_tmp, bidirectional=True,
-                                         **kwargs_tmp)
-        continuations[name_tmp] = cont
-
-        if recursion < max_recursion_depth:
-
-            # get types of all solutions along curve
-            codim2_bifs = get_from_solutions(['bifurcation', f'PAR({params[0]})', f'PAR({params[1]})'], sols)
-
-            for bf, p1, p2 in codim2_bifs:
-
-                param_pos = np.round([p1, p2], decimals=precision)
-
-                if "ZH" in bf and (p not in zhs or not any([p_tmp[0] == param_pos[0] and p_tmp[1] == param_pos[1]
-                                                            for p_tmp in zhs[p]['pos']])):
-
-                    if p not in zhs:
-                        zhs[p] = {'count': 1, 'pos': [param_pos]}
-                    else:
-                        zhs[p]['count'] += 1
-                        zhs[p]['pos'].append(param_pos)
-
-                    # perform 1D continuation to find nearby fold bifurcation
-                    kwargs_tmp = kwargs.copy()
-                    kwargs_tmp.update({'ILP': 1, 'IPS': 1, 'ISW': 1, 'ISP': 2, 'ICP': params[0], 'STOP': ['LP1', 'HB1']
-                                       })
-                    s_tmp, c_tmp = pyauto_instance.run(starting_point=f"ZH{zhs[p]['count']}", origin=cont,
-                                                       bidirectional=True, **kwargs_tmp)
-
-                    codim1_bifs = get_from_solutions(['bifurcation'], s_tmp)
-                    if "LP" in codim1_bifs:
-                        p_tmp = 'LP1'
-                        name_tmp2 = f"{name_tmp}/ZH{zhs[p]['count']}"
-                    elif "HB" in codim1_bifs:
-                        p_tmp = 'HB1'
-                        name_tmp2 = f"{name_tmp}/ZH{zhs[p]['count']}"
-                    else:
-                        continue
-
-                    # perform 2D continuation of the fold or hopf bifurcation
-                    continuations.update(codim2_search(params=params, starting_points=[p_tmp], origin=c_tmp,
-                                                       pyauto_instance=pyauto_instance, recursion=recursion + 1,
-                                                       max_recursion_depth=max_recursion_depth, periodic=False,
-                                                       name=name_tmp2, **kwargs))
-
-                elif "GH" in bf and (p not in ghs or not any([p_tmp[0] == param_pos[0] and p_tmp[1] == param_pos[1]
-                                                              for p_tmp in ghs[p]['pos']])):
-
-                    # if p not in ghs:
-                    #     ghs[p] = {'count': 1, 'pos': [param_pos]}
-                    # else:
-                    #     ghs[p]['count'] += 1
-                    #     ghs[p]['pos'].append(param_pos)
-                    #
-                    # # perform 1D continuation of limit cycle
-                    # kwargs_tmp = kwargs.copy()
-                    # kwargs_tmp.update({'ILP': 1, 'IPS': 2, 'ISW': -1, 'ISP': 2, 'ICP': [params[0], 11], 'NMX': 200})
-                    # if kwargs_lc_cont:
-                    #     kwargs_tmp.update(kwargs_lc_cont)
-                    # s_tmp, c_tmp = pyauto_instance.run(starting_point=f"GH{ghs[p]['count']}", origin=cont,
-                    #                                    STOP={'LP1'}, **kwargs_tmp)
-                    #
-                    # codim1_bifs = get_from_solutions(['bifurcation'], s_tmp)
-                    # if "LP" in codim1_bifs:
-                    #     continuations.update(codim2_search(params=params, starting_points=['LP1'], origin=c_tmp,
-                    #                                        pyauto_instance=pyauto_instance, recursion=recursion + 1,
-                    #                                        max_recursion_depth=max_recursion_depth, periodic=True,
-                    #                                        name=f"{name}:{p}/GH{ghs[p]['count']}", **kwargs))
-                    pass
-
-                elif "BT" in bf:
-
-                    pass
-
-    return continuations
-
-
-def fractal_dimension(lyapunov_exponents: list) -> float:
-    """Calculates the fractal or information dimension of an attractor of a dynamical system from its lyapunov
-    epxonents, according to the Kaplan-Yorke formula (Kaplan and Yorke, 1979).
-
-    Parameters
-    ----------
-    lyapunov_exponents
-        List containing the lyapunov spectrum of a solution of a dynamical system.
-
-    Returns
-    -------
-    float
-        Fractal dimension of the attractor of the system.
-
-    """
-
-    LEs = np.sort(lyapunov_exponents)[::-1]
-    if np.sum(LEs) > 0:
-        return len(LEs)
-    k = 0
-    for j in range(len(LEs)-1):
-        k = j+1
-        if np.sum(LEs[:k]) < 0:
-            k -= 1
-            break
-    return k + np.sum(LEs[:k]) / np.abs(LEs[k])
-
-
-def get_point_idx(diag: list, point: int) -> int:
-    """Extract list idx of correct diagnostics string for continuation point with index `point`.
-
-    Parameters
-    ----------
-    diag
-    point
-
-    Returns
-    -------
-    int
-        Point index for `diag`.
-
-    """
-
-    idx = point
-    while idx < len(diag)-1:
-
-        diag_tmp = diag[idx]['Text']
-        if "Location of special point" in diag_tmp and "Convergence" not in diag_tmp:
-            idx += 1
-        elif "NOTE:Retrying step" in diag_tmp:
-            idx += 1
-        else:
-
-            # find index of line after first appearance of BR
-            diag_tmp = diag_tmp.split('\n')
-            idx_line = 1
-            while idx_line < len(diag_tmp)-1:
-                if 'BR' in diag_tmp[idx_line].split(' '):
-                    break
-                idx_line += 1
-            diag_tmp = diag_tmp[idx_line+1]
-
-            # find point number in text
-            line_split = [d for d in diag_tmp.split(' ') if d != ""]
-            if abs(int(line_split[1])) < point+1:
-                idx += 1
-            elif abs(int(line_split[1])) == point+1:
-                return idx
-            else:
-                raise ValueError(f"Point with index {point+1} was not found on solution. Last auto output line that "
-                                 f"was checked: \n {diag_tmp}")
-    return idx
-
-
-def get_from_solutions(keys: list, solutions: dict) -> list:
-    """Extracts attributes from each solution in a branch.
-
-    Parameters
-    ----------
-    keys
-    solutions
-
-    Returns
-    -------
-    List with attributes for each solution.
-
-    """
-    if len(keys) > 1:
-        return [[s[k] for k in keys] for s in solutions.values()]
-    else:
-        return [s[keys[0]] for s in solutions.values()]

@@ -31,4 +31,6 @@ __author__ = "Richard Gast"
 __status__ = "Development"
 __version__ = "0.7.2"
 
-from .pycobi import ODESystem, get_from_solutions, continue_period_doubling_bf
+from .pycobi import ODESystem
+from .utility import get_lyapunov_exponents, get_solution_eigenvalues, fractal_dimension
+from .automated_continuation import continue_period_doubling_bf, codim2_search
