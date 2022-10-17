@@ -5,6 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/pycobi.svg)](https://badge.fury.io/py/pycobi)
 [![CircleCI](https://circleci.com/gh/pyrates-neuroscience/PyCoBi.svg?style=svg)](https://circleci.com/gh/pyrates-neuroscience/PyCoBi)
 [![Documentation Status](https://readthedocs.org/projects/pycobi/badge/?version=latest)](https://pycobi.readthedocs.io/en/latest/?badge=latest)
+[![DOI](https://zenodo.org/badge/448007450.svg)](https://zenodo.org/badge/latestdoi/448007450)
 
 <img src="PyCoBi_logo_color.png" width="20%" heigth="20%" align="right">
 
@@ -15,10 +16,6 @@ functions to visualize bifurcation diagrams and solutions.
 Finally, it allows to automatically generate the user-supplied Fortran routines via [PyRates](https://github.com/pyrates-neuroscience/PyRates),
 such that *Auto-07p* can be fully used/controlled from within a single Python script, 
 without the need to supply additional non-Python files.
-
-**Use Example:** Use examples will be provided here soon. For now, have a look at the [this example](https://pyrates.readthedocs.io/en/latest/auto_analysis/continuation.html#sphx-glr-auto-analysis-continuation-py)
-which demonstrates how to create the required Fortran files for *Auto-07p* via [PyRates](https://github.com/pyrates-neuroscience/PyRates)
-and use them to run a 1D parameter continuation and bifurcation detection via *PyCoBi*.
 
 Installation
 ============
@@ -69,6 +66,11 @@ pip install pycobi
 
 Alternatively, the development version of *PyCoBi* can be installed by cloning the github 
 repository and using the `setup.py` for installation (see steps 1 and 4). 
+
+Documentation
+=============
+
+A full API, documentation, and use examples can be found at [readthedocs](https://pycobi.readthedocs.io/en/latest/).
 
 References
 ==========
