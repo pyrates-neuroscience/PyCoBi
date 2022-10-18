@@ -4,28 +4,8 @@ Hopf Bifurcation and Limit Cycle Continuation
 
 Here, we will demonstrate how to perform branch switching at an `Andronov-Hopf bifurcation <http://www.scholarpedia.org/article/Andronov-Hopf_bifurcation>`_
  and continue a branch of periodic solutions.
- QIF population mean-field model, which has been derived from a population of all-to-all
-coupled QIF neurons in [1]_. The model equations are given by:
-
-.. math::
-
-    \\tau \\dot r &= \\frac{\\Delta}{\\pi\\tau} + 2 r v, \n
-    \\tau \\dot v &= v^2 +\\bar\\eta + I(t) + J r \\tau - (\\pi r \\tau)^2,
-
-where :math:`r` is the average firing rate and :math:`v` is the average membrane potential of the QIF population [1]_.
-It is governed by 4 parameters:
-    - :math:`\\tau` --> the population time constant
-    - :math:`\\bar \\eta` --> the mean of a Cauchy distribution over the neural excitability in the population
-    - :math:`\\Delta` --> the half-width at half maximum of the Cauchy distribution over the neural excitability
-    - :math:`J` --> the strength of the recurrent coupling inside the population
-This mean-field model is an exact representation of the macroscopic firing rate and membrane potential dynamics of a
-spiking neural network consisting of QIF neurons with `Cauchy <https://en.wikipedia.org/wiki/Cauchy_distribution>`_ distributed background excitabilities.
-While the mean-field derivation is mathematically only valid for all-to-all coupled populations of infinite size,
-it has been shown that there is a close correspondence between the mean-field model and neural populations with
-sparse coupling and population sizes of a few thousand neurons [2]_. In the same work, it has been demonstrated how to
-extend the model by adding synaptic dynamics or additional adaptation currents to the single cell network, that can be
-carried through the mean-field derivation performed in [1]_. For example, a QIF population with
-spike-frequency adaptation would be given by the following 3D system:
+As an example model, we use the mean-field model of a population of globally coupled quadratic integrate-and-fire (QIF)
+neurons with spike-frequency adaptation (SFA). The model equations were derived in [1]_ and are given by:
 
 .. math::
 
@@ -33,11 +13,21 @@ spike-frequency adaptation would be given by the following 3D system:
     \\tau \\dot v &= v^2 +\\bar\\eta + I(t) + J r \\tau - a - (\\pi r \\tau)^2, \n
     \\tau_a \\dot a &= -a + \\alpha \\tau_a r,
 
-where the evolution equation for :math:`a` expresses a convolution of :math:`r` with a mono-exponential kernel, with
-adaptation strength :math:`\\alpha` and time constant :math:`\\tau_a`.
+where :math:`r` is the average firing rate, :math:`v` is the average membrane potential, and :math:`a` is the average
+SFA of the QIF population [1]_.
+The model dynamics are governed by 6 parameters:
+    - :math:`\\tau` --> the population time constant,
+    - :math:`\\bar \\eta` --> the mean of a Cauchy distribution over the neural excitability in the population,
+    - :math:`\\Delta` --> the half-width at half maximum of the Cauchy distribution over the neural excitability,
+    - :math:`J` --> the strength of the recurrent coupling inside the population,
+    - :math:`\\tau_a` --> the SFA time scale,
+    - :math:`\\alpha` --> the SFA rate.
+This mean-field model is an exact representation of the macroscopic firing rate and membrane potential dynamics of a
+spiking neural network consisting of QIF neurons with `Cauchy <https://en.wikipedia.org/wiki/Cauchy_distribution>`_
+distributed background excitabilities.
 
-In the sections below, we will demonstrate for each model how to load the model template into pyrates, perform
-simulations with it and visualize the results.
+It has been demonstrated that SFA induces synchronized oscillations in a population of excitatorily coupled QIF
+neurons [1]_. In the example below, we will replicate these results via bifurcation analysis in `PyCoBi`.
 
 References
 ^^^^^^^^^^

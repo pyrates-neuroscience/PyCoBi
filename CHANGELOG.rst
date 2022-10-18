@@ -4,6 +4,12 @@ Changelog
 0.7
 ---
 
+0.7.4
+~~~~~
+
+- debugged the QIF-SFA use example
+- added zenodo doi to the readme and documentation
+
 0.7.3
 ~~~~~
 

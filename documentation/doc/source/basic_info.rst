@@ -19,6 +19,9 @@ Reference
 
 If you use `PyCoBi`, please cite the most recent release:
 
+.. image:: https://zenodo.org/badge/448007450.svg
+   :target: https://zenodo.org/badge/latestdoi/448007450
+
 Contact
 -------
 

@@ -17,9 +17,9 @@ __status__ = "Development"
 
 def setup_module():
     print("\n")
-    print("============================")
-    print("| Test Suite : Input layer |")
-    print("============================")
+    print("==========================")
+    print("| Test Suite : ODESystem |")
+    print("==========================")
 
 
 @fixture(scope="session")  # type: str
