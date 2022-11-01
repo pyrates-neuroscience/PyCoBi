@@ -9,6 +9,7 @@ Changelog
 
 - debugged the QIF-SFA use example
 - added zenodo doi to the readme and documentation
+- removed bug with saving additional attributes on the ODESystem instance
 
 0.7.3
 ~~~~~

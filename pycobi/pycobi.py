@@ -16,7 +16,7 @@ from .utility import get_solution_stability, get_solution_keys, get_branch_info,
 class ODESystem:
 
     __slots__ = ["auto_solutions", "results", "_orig_dir", "dir", "_auto", "_last_cont", "_cont_num", "_results_map",
-                 "_branches", "_bifurcation_styles", "_temp"]
+                 "_branches", "_bifurcation_styles", "_temp", "additional_attributes"]
 
     def __init__(self, working_dir: str = None, auto_dir: str = None, init_cont: bool = True, **kwargs) -> None:
         """
@@ -61,6 +61,7 @@ class ODESystem:
             except FileNotFoundError:
                 os.chdir(f"{os.getcwd()}/{working_dir}")
         self.dir = os.getcwd()
+        self.additional_attributes = {}
 
         # private attributes
         self._auto = a
@@ -172,15 +173,11 @@ class ODESystem:
         pyauto_instance = cls('', auto_dir=auto_dir, init_cont=False)
         data = pickle.load(open(filename, 'rb'))
         for key, val in data.items():
-            if hasattr(pyauto_instance, key):
-                attr = getattr(pyauto_instance, key)
-                if type(attr) is dict:
-                    attr.update(val)
-                else:
-                    raise AttributeError(f'Attribute {key} is already contained on this PyCoBi instance and cannot be '
-                                         f'set.')
+            attr = getattr(pyauto_instance, key)
+            if type(attr) is dict:
+                attr.update(val)
             else:
-                setattr(pyauto_instance, key, val)
+                raise AttributeError(f'Attribute {key} already exists on this `ODESystem` instance.')
         return pyauto_instance
 
     def to_file(self, filename: str, results_only: bool = True, **kwargs) -> None:
@@ -944,8 +941,8 @@ class ODESystem:
             add_columns = False
 
         # arrange data into DataFrame
-        df = DataFrame(data=data_2d, columns=MultiIndex.from_tuples(columns_2d), index=indices)
-        df2 = DataFrame(data=data_1d, columns=columns_1d, index=indices)
+        df = _get_dataframe(data_2d, columns=MultiIndex.from_tuples(columns_2d), index=indices)
+        df2 = _get_dataframe(data_1d, columns=columns_1d, index=indices)
         for i, key in enumerate(columns_1d):
             df[key] = df2.loc[:, key]
         return df
@@ -1013,7 +1010,7 @@ class ODESystem:
             x = np.reshape(x, (x.squeeze().shape[0], 1))
         except IndexError:
             pass
-        if hasattr(y[0], "shape") and y[0].shape[0] > 1:
+        if hasattr(y[0], "shape") and sum(y[0].shape) > 1:
             y = np.asarray([y[i] for i in range(y.shape[0])])
             y_max = np.reshape(y.max(axis=1), (y.shape[0], 1))
             y_min = np.reshape(y.min(axis=1), (y.shape[0], 1))
@@ -1129,3 +1126,13 @@ class ODESystem:
         x_min, x_max = x.min(), x.max()
         x_pad = (x_max - x_min) * padding
         return x_min - x_pad, x_max + x_pad
+
+
+def _get_dataframe(data: list, columns: Union[list, MultiIndex], index: list) -> DataFrame:
+    try:
+         return DataFrame(data=data, columns=columns, index=index)
+    except ValueError as e:
+        if len(data) > len(index):
+            return DataFrame(data=data[:-1], columns=columns, index=index)
+        else:
+            raise e
