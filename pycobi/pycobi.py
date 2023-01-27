@@ -1,7 +1,7 @@
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from pandas import DataFrame, MultiIndex
+from pandas import DataFrame, MultiIndex, Series
 from mpl_toolkits.mplot3d import Axes3D
 from pyrates import CircuitTemplate, clear
 from matplotlib.collections import LineCollection
@@ -393,8 +393,8 @@ class ODESystem:
         start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
 
         # extract ICP values
-        icp_old = summary_old.loc[end_old, f"PAR({icp[0]})"][0]
-        icp_new = summary.loc[end_new, f"PAR({icp[0]})"][0]
+        icp_old = summary_old.loc[end_old, f"PAR({icp[0]})"].values[0]
+        icp_new = summary.loc[end_new, f"PAR({icp[0]})"].values[0]
 
         # connect starting points of both continuations and re-label points accordingly
         if icp_new < icp_old:
@@ -408,9 +408,9 @@ class ODESystem:
         # move points into combined summary
         summary_final = {}
         for p1, p2 in zip(keys_sorted[0], keys_sorted[0][::-1]):
-            summary_final[p1] = conts_sorted[0].loc[p2, :]
+            summary_final[p1] = _extract_merge_point(p2, conts_sorted[0])
         for p in keys_sorted[1]:
-            summary_final[p+end_point] = conts_sorted[1].loc[p, :]
+            summary_final[p+end_point] = _extract_merge_point(p, conts_sorted[1])
 
         # store updated summary
         self.results[key] = DataFrame(summary_final).T
@@ -1136,3 +1136,10 @@ def _get_dataframe(data: list, columns: Union[list, MultiIndex], index: list) ->
             return DataFrame(data=data[:-1], columns=columns, index=index)
         else:
             raise e
+
+
+def _extract_merge_point(p: int, df: DataFrame) -> Series:
+    p_tmp = df.loc[p, :]
+    if len(p_tmp.shape) > 1 and p_tmp.shape[0] > 1:
+        return p_tmp.iloc[0, :]
+    return p_tmp
