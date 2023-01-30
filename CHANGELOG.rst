@@ -4,6 +4,11 @@ Changelog
 0.7
 ---
 
+0.7.5
+~~~~~
+
+- fixed a bug with the readthedocs website building
+
 0.7.4
 ~~~~~
 
