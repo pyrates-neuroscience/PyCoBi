@@ -7,7 +7,7 @@ Changelog
 0.7.5
 ~~~~~
 
-- fixed a bug with the readthedocs website building
+- added a bugfix that allows to merge solution branches that included multiple branches that might arise from a automated switching at a branch point
 
 0.7.4
 ~~~~~
