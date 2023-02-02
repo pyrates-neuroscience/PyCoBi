@@ -8,6 +8,7 @@ Changelog
 ~~~~~
 
 - added a bugfix that allows to merge solution branches that included multiple branches that might arise from a automated switching at a branch point
+- fixed a bug with the readthedocs website not displaying math correctly
 - updated version dependency on numpy (enforced by issues between the newest version of numpy and Auto-07p)
 
 0.7.4
