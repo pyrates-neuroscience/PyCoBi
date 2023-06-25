@@ -59,7 +59,7 @@ ode = ODESystem.from_yaml(
 # steady-state solution.
 
 import matplotlib.pyplot as plt
-ode.plot_continuation("PAR(14)", "U(1)", cont=0)
+ode.plot_continuation("t", "p/qif_sfa_op/r", cont=0)
 plt.show()
 
 # %%
@@ -74,10 +74,10 @@ plt.show()
 
 eta_sols, eta_cont = ode.run(
     origin=0, starting_point='EP', name='eta', bidirectional=True,
-    ICP=4, RL0=-20.0, RL1=20.0, IPS=1, ILP=1, ISP=2, ISW=1, NTST=400,
+    ICP="p/qif_sfa_op/eta", RL0=-20.0, RL1=20.0, IPS=1, ILP=1, ISP=2, ISW=1, NTST=400,
     NCOL=4, IAD=3, IPLT=0, NBC=0, NINT=0, NMX=2000, NPR=10, MXBF=5, IID=2,
     ITMX=40, ITNW=40, NWTN=12, JAC=0, EPSL=1e-06, EPSU=1e-06, EPSS=1e-04,
-    DS=1e-4, DSMIN=1e-8, DSMAX=5e-2, IADS=1, THL={}, THU={}, UZR={4: 3.0}, STOP={}
+    DS=1e-4, DSMIN=1e-8, DSMAX=5e-2, IADS=1, THL={}, THU={}, UZR={"p/qif_sfa_op/eta": 3.0}, STOP={}
 )
 
 # %%
@@ -91,7 +91,7 @@ eta_sols, eta_cont = ode.run(
 # the name :code:`starting_point='EP'` exists, which is used as the starting point of the parameter continuation.
 # We can plot the results of the 1D parameter continuation, to examine the results.
 
-ode.plot_continuation("PAR(4)", "U(1)", cont="eta")
+ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta")
 plt.show()
 
 # %%
@@ -112,15 +112,15 @@ plt.show()
 
 hopf_sols, hopf_cont = ode.run(
     origin=eta_cont, starting_point='HB2', name='eta_hopf',
-    IPS=2, ISP=2, ISW=-1, UZR={4: -2.0}
+    IPS=2, ISP=2, ISW=-1, UZR={"p/qif_sfa_op/eta": -2.0}
 )
 
 # %%
 # Let's visualize the 1D bifurcation diagram again, this time with the limit cycle branch included:
 
 fig, ax = plt.subplots()
-ode.plot_continuation("PAR(4)", "U(1)", cont="eta", ax=ax)
-ode.plot_continuation("PAR(4)", "U(1)", cont="eta_hopf", ax=ax)
+ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta", ax=ax)
+ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta_hopf", ax=ax)
 plt.show()
 
 # %%
@@ -131,7 +131,7 @@ plt.show()
 # system dynamics are indeed governed by the stable limit cycle solution in that regime.
 
 ode.run(origin=hopf_cont, starting_point="UZ1", c="ivp", name="lc")
-ode.plot_continuation("PAR(14)", "U(1)", cont="lc")
+ode.plot_continuation("t", "p/qif_sfa_op/r", cont="lc")
 plt.show()
 
 # %%

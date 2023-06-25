@@ -39,7 +39,7 @@ def test_1_1_init(auto_dir):
     """
 
     # initialize ODESystem the default way
-    ode1 = ODESystem(working_dir="resources", auto_dir=auto_dir, init_cont=False)
+    ode1 = ODESystem(eq_file='qif_eq', working_dir="resources", auto_dir=auto_dir, init_cont=False)
     ode1.close_session()
 
     # initialize ODESystem from YAML file
@@ -65,7 +65,7 @@ def test_1_2_run(auto_dir):
     """
 
     # initialize ODESystem the default way
-    ode1 = ODESystem(working_dir="resources", auto_dir=auto_dir, init_cont=True, e="qif_eq", c="ivp", NPR=100)
+    ode1 = ODESystem(eq_file="qif_eq", working_dir="resources", auto_dir=auto_dir, init_cont=True, c="ivp", NPR=100)
     ode1.close_session()
 
     # initialize ODESystem from YAML file

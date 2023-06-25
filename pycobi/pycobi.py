@@ -16,13 +16,17 @@ from .utility import get_solution_stability, get_solution_keys, get_branch_info,
 class ODESystem:
 
     __slots__ = ["auto_solutions", "results", "_orig_dir", "dir", "_auto", "_last_cont", "_cont_num", "_results_map",
-                 "_branches", "_bifurcation_styles", "_temp", "additional_attributes"]
+                 "_branches", "_bifurcation_styles", "_temp", "additional_attributes", "_eq", "_var_map",
+                 "_var_map_inv"]
 
-    def __init__(self, working_dir: str = None, auto_dir: str = None, init_cont: bool = True, **kwargs) -> None:
+    def __init__(self, eq_file: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
+                 params: list = None, state_vars: list = None, **kwargs) -> None:
         """
 
         Parameters
         ----------
+        eq_file
+            Equation file that this instance of PyCoBi will use for all calls to `PyCoBi.run`
         working_dir
             Directory in which all the fortran equation and auto-07p constant files are saved.
         auto_dir
@@ -32,6 +36,11 @@ class ODESystem:
             keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
             and the auto constants provided via the keyword argument `c=<fname>`
             (a file named `c.<fname>` should exist in `working_dir`).
+        params
+            Optional ordered list with names of all parameters in the model equations. Can be used to refer to model
+            parameters.
+        state_vars
+            Optional ordered list that provides a name for each entry in the state vector of the model equations.
         kwargs
             Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
             integration.
@@ -65,6 +74,7 @@ class ODESystem:
 
         # private attributes
         self._auto = a
+        self._eq = eq_file
         self._last_cont = 0
         self._cont_num = 0
         self._results_map = {}
@@ -77,6 +87,17 @@ class ODESystem:
                                     'GH': {'marker': 'o', 'color': '#148F77'}
                                     }
         self._temp = kwargs.pop("template", None)
+
+        # create a map that links variable/parameter indices to string-based keys
+        self._var_map = {"t": {"cont": 14, "plot": "PAR(14)"}}
+        self._var_map_inv = {}
+        for i, key in enumerate(params):
+            self._var_map[key] = {"cont": i+1, "plot": f"PAR({i+1})"}
+        for i, key in enumerate(state_vars):
+            self._var_map[key] = {"cont": i+1, "plot": f"U({i+1})"}
+        for key, val in self._var_map.items():
+            self._var_map_inv[val["cont"]] = key
+            self._var_map_inv[val["plot"]] = key
 
         # perform initial continuation in time to ensure convergence to steady-state solution
         if init_cont:
@@ -147,12 +168,14 @@ class ODESystem:
             template.update_var(edge_vars=kwargs.pop("edge_vars"))
 
         # generate fortran files
-        _ = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran", float_precision="float64",
-                                  auto=True, vectorize=False, solver=solver, **kwargs)
+        _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran",
+                                                         float_precision="float64", auto=True, vectorize=False,
+                                                         solver=solver, **kwargs)
 
         # initialize ODESystem
         return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=file_name, c="ivp",
-                   template=template, **init_kwargs)
+                   template=template, params=params[3:], state_vars=list(state_vars), eq_file=file_name_full,
+                   **init_kwargs)
 
     @classmethod
     def from_file(cls, filename: str, auto_dir: str = None):
@@ -271,10 +294,11 @@ class ODESystem:
             origin = origin.pycobi_key
 
         # call to auto
-        constants = auto_kwargs.pop('c', None)
-        if constants:
-            solution = self._call_auto(starting_point, origin, c=constants, **auto_kwargs)
-            auto_kwargs['c'] = constants
+        constant_file = auto_kwargs.pop('c', None)
+        auto_kwargs = self._map_auto_kwargs(auto_kwargs)
+        if constant_file:
+            solution = self._call_auto(starting_point, origin, c=constant_file, **auto_kwargs)
+            auto_kwargs['c'] = constant_file
         else:
             solution = self._call_auto(starting_point, origin, **auto_kwargs)
 
@@ -393,8 +417,9 @@ class ODESystem:
         start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
 
         # extract ICP values
-        icp_old = summary_old.loc[end_old, f"PAR({icp[0]})"].values[0]
-        icp_new = summary.loc[end_new, f"PAR({icp[0]})"].values[0]
+        key = self._var_map_inv[f"PAR({icp[0]})"]
+        icp_old = summary_old.loc[end_old, key].values[0]
+        icp_new = summary.loc[end_new, key].values[0]
 
         # connect starting points of both continuations and re-label points accordingly
         if icp_new < icp_old:
@@ -532,6 +557,8 @@ class ODESystem:
             Contains the requested properties of the solution.
         """
         summary = self.get_summary(cont, point=point)
+        columns = [k for k, _ in list(summary.keys())]
+        keys = [key if key in columns else self._var_map_inv[key] for key in keys]
         if point:
             return summary.loc[point, keys]
         return summary.loc[:, keys]
@@ -568,10 +595,10 @@ class ODESystem:
         axislim_pad = kwargs.pop('axislimpad', 0)
 
         # extract information from branch solutions
-        if x == 'PAR(14)':
+        if x in ["PAR(14)", "t"]:
             results = self.extract([x, y], cont=cont)
-            results['stability'] = np.asarray([True] * len(results['PAR(14)']))
-            results['bifurcation'] = np.asarray(['RG'] * len(results['PAR(14)']))
+            results['stability'] = np.asarray([True] * len(results[x]))
+            results['bifurcation'] = np.asarray(['RG'] * len(results[x]))
         else:
             results = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
 
@@ -941,9 +968,9 @@ class ODESystem:
             add_columns = False
 
         # arrange data into DataFrame
-        df = _get_dataframe(data_2d, columns=MultiIndex.from_tuples(columns_2d), index=indices)
-        df2 = _get_dataframe(data_1d, columns=columns_1d, index=indices)
-        for i, key in enumerate(columns_1d):
+        df = self._to_dataframe(data_2d, columns=columns_2d, index=indices)
+        df2 = self._to_dataframe(data_1d, columns=columns_1d, index=indices)
+        for i, key in enumerate(df2.columns.values):
             df[key] = df2.loc[:, key]
         return df
 
@@ -966,6 +993,51 @@ class ODESystem:
                 min_val, max_val = eval(f"ax.get_{ax_names[i]}lim()")
                 min_val, max_val = np.min([min_val, axis_limits[0]]), np.max([max_val, axis_limits[1]])
             eval(f"ax.set_{ax_names[i]}lim(min_val, max_val)")
+
+    def _map_auto_kwargs(self, kwargs: dict) -> dict:
+
+        # handle the continuation parameter
+        if "ICP" in kwargs:
+            val = kwargs.pop("ICP")
+            if type(val) is str:
+                kwargs["ICP"] = self._var_map[val]["cont"]
+            elif type(val) in [list, tuple]:
+                kwargs["ICP"] = [self._var_map[v]["cont"] if type(v) is str else v for v in val]
+            else:
+                kwargs["ICP"] = val
+
+        # handle the user-point parameter
+        if "UZR" in kwargs:
+            uzr_dict = kwargs.pop("UZR")
+            kwargs["UZR"] = {self._var_map[key]["cont"] if type(key) is str else key: val for key, val in uzr_dict.items()}
+
+        return kwargs
+
+    def _to_dataframe(self, data: list, columns: Union[list, tuple], index: list) -> DataFrame:
+
+        # map variable/parameter keys to string-based keys
+        columns_new = []
+        multi_idx = False
+        for c in columns:
+            if type(c) is tuple:
+                col = (self._var_map_inv[c[0]] if c[0] in self._var_map_inv else c[0], c[1])
+                multi_idx = True
+            else:
+                col = self._var_map_inv[c] if c in self._var_map_inv else c
+            columns_new.append(col)
+        if multi_idx:
+            columns = MultiIndex.from_tuples(tuple(columns_new))
+        else:
+            columns = columns_new
+
+        # create dataframe
+        try:
+            return DataFrame(data=data, columns=columns, index=index)
+        except ValueError as e:
+            if len(data) > len(index):
+                return DataFrame(data=data[:-1], columns=columns, index=index)
+            else:
+                raise e
 
     @staticmethod
     def _get_all_var_keys(solution):
@@ -1126,16 +1198,6 @@ class ODESystem:
         x_min, x_max = x.min(), x.max()
         x_pad = (x_max - x_min) * padding
         return x_min - x_pad, x_max + x_pad
-
-
-def _get_dataframe(data: list, columns: Union[list, MultiIndex], index: list) -> DataFrame:
-    try:
-         return DataFrame(data=data, columns=columns, index=index)
-    except ValueError as e:
-        if len(data) > len(index):
-            return DataFrame(data=data[:-1], columns=columns, index=index)
-        else:
-            raise e
 
 
 def _extract_merge_point(p: int, df: DataFrame) -> Series:

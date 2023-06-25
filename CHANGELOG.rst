@@ -1,6 +1,18 @@
 Changelog
 =========
 
+0.8
+---
+
+0.8.0
+~~~~~
+
+- added mapping functionalities that allow to use the pyrates-based names for variables and parameters in the model rather than the auto naming style
+- implemented the changes with the `ODESystem.run` and `ODESystem.extract` methods
+- dataframes return by `ODESystem.run` now contain the pyrates-like variable names in the column header
+- `ODESystem.__init__` now takes a couple of new arguments: The "eq_file" is a positional argument that ties an `ODESystem` instance to a single fortran equation file. "params" and "state_vars" allow to provide the parameter and state variable names that can be used instead of the indexing style of auto.
+- the parameter and state-variable names that can be provided to the `ODESystem.__init__` method can be directly obtained from the `CircuitTemplate.get_run_func` that is also used by the `ODESystem.from_yaml` method.
+
 0.7
 ---
 
