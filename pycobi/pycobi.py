@@ -91,10 +91,12 @@ class ODESystem:
         # create a map that links variable/parameter indices to string-based keys
         self._var_map = {"t": {"cont": 14, "plot": "PAR(14)"}}
         self._var_map_inv = {}
-        for i, key in enumerate(params):
-            self._var_map[key] = {"cont": i+1, "plot": f"PAR({i+1})"}
-        for i, key in enumerate(state_vars):
-            self._var_map[key] = {"cont": i+1, "plot": f"U({i+1})"}
+        if params:
+            for i, key in enumerate(params):
+                self._var_map[key] = {"cont": i+1, "plot": f"PAR({i+1})"}
+        if state_vars:
+            for i, key in enumerate(state_vars):
+                self._var_map[key] = {"cont": i+1, "plot": f"U({i+1})"}
         for key, val in self._var_map.items():
             self._var_map_inv[val["cont"]] = key
             self._var_map_inv[val["plot"]] = key
@@ -279,6 +281,8 @@ class ODESystem:
         ###########
 
         # extract starting point of continuation
+        if self._last_cont == 0:
+            auto_kwargs["e"] = self._eq
         if 'IRS' in auto_kwargs or 's' in auto_kwargs:
             raise ValueError('Usage of keyword arguments `IRS` and `s` is disabled in pycobi. To start from a previous'
                              'solution, use the `starting_point` keyword argument and provide a tuple of branch '

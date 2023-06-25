@@ -79,6 +79,8 @@ def test_1_2_run(auto_dir):
                                node_vars={'p/qif_op/eta': 2.0}, NPR=100, NMX=5000)
     ode3.close_session(clear_files=True)
 
+    print(ode2[0].columns.values)
+
     # these tests should pass
-    assert (ode1[0].loc[:, "U(1)"] - ode2[0].loc[:, "U(1)"]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
-    assert abs((ode2[0].loc[:, "U(1)"] - ode3[0].loc[:, "U(1)"]).sum()[0]) > 0
+    assert (ode1[0]["U(1)"] - ode2[0]["p/qif_op/r"]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
+    assert abs((ode2[0]["p/qif_op/r"] - ode3[0]["p/qif_op/r"]).sum()[0]) > 0
