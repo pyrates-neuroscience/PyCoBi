@@ -421,7 +421,9 @@ class ODESystem:
         start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
 
         # extract ICP values
-        key = self._var_map_inv[f"PAR({icp[0]})"]
+        key = f"PAR({icp[0]})"
+        if key in self._var_map_inv:
+            key = self._var_map_inv[key]
         icp_old = summary_old.loc[end_old, key].values[0]
         icp_new = summary.loc[end_new, key].values[0]
 
