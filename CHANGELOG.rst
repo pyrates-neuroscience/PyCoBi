@@ -4,6 +4,12 @@ Changelog
 0.8
 ---
 
+0.8.1
+~~~~~
+
+- updates of the readthedocs requirements
+- minor bugfix in "pycobi.py", where the new variable/parameter naming changes from 0.8.0 were interfering with the old naming system
+
 0.8.0
 ~~~~~
 
