@@ -4,6 +4,13 @@ Changelog
 0.8
 ---
 
+0.8.2
+~~~~~
+
+- updated plotting method `ODESystem.plot_continuation`: It can now automatically plot a legend for all bifurcation points in a bifurcation diagram
+- Keyword argument added to `ODESystem.plot_continuation`: "bifurcation_legend" can be set to `True` or `False` to turn bifurcation type legends on/off
+- Bifurcation markers are now plotted via the `matplotlib.pyplot.plot` function rather than the `matplotlib.pyplot.scatter` function
+
 0.8.1
 ~~~~~
 

@@ -570,7 +570,8 @@ class ODESystem:
         return summary.loc[:, keys]
 
     def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
-                          force_axis_lim_update: bool = False, **kwargs) -> LineCollection:
+                          force_axis_lim_update: bool = False, bifurcation_legend: bool = True, **kwargs
+                          ) -> LineCollection:
         """Line plot of 1D/2D parameter continuations and the respective codimension 1/2 bifurcations.
 
         Parameters
@@ -585,6 +586,8 @@ class ODESystem:
             Axis in which to plot the data. If not provided, a new figure will be created.
         force_axis_lim_update
             If true, the axis limits of x and y axis will be updated after creating the line plots.
+        bifurcation_legend
+            If true, a legend will be plotted that lists the type of all special solutions on a continuation curve.
         kwargs
             Additional keyword arguments that allow to control the appearance of the line plot.
 
@@ -612,8 +615,8 @@ class ODESystem:
         bifurcation_point_kwargs = ['default_color', 'default_marker', 'default_size', 'custom_bf_styles',
                                     'ignore']
         kwargs_tmp = {key: kwargs.pop(key) for key in bifurcation_point_kwargs if key in kwargs}
-        ax = self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[x],
-                                          y_vals=results[y], ax=ax, **kwargs_tmp)
+        bfs, labels = self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[x],
+                                                   y_vals=results[y], ax=ax, **kwargs_tmp)
 
         # set title variable if passed
         tvar = kwargs.pop('title_var', None)
@@ -633,6 +636,8 @@ class ODESystem:
         ax.set_xlabel(x, labelpad=label_pad)
         ax.set_ylabel(y, labelpad=label_pad)
         self._update_axis_lims(ax, ax_data=[x_data, y_data], padding=axislim_pad, force_update=force_axis_lim_update)
+        if bifurcation_legend:
+            ax.legend()
 
         return line_col
 
@@ -791,8 +796,8 @@ class ODESystem:
         return ax
 
     def plot_bifurcation_points(self, solution_types: DataFrame, x_vals: DataFrame, y_vals: DataFrame, ax: plt.Axes,
-                                default_color: str = 'k', default_marker: str = '*', default_size: float = 50,
-                                ignore: list = None, custom_bf_styles: dict = None) -> plt.Axes:
+                                default_color: str = 'k', default_marker: str = '*', default_size: float = 10,
+                                ignore: list = None, custom_bf_styles: dict = None) -> tuple:
         """Plot markers for special solutions at coordinates in 2D space.
 
         Parameters
@@ -818,8 +823,9 @@ class ODESystem:
 
         Returns
         -------
-        plt.Axes
-            Axis object that contains the plotted special solutions.
+        tuple
+            A 2-entry tuple of (1) a list of PathCollections that correspond to bifurcation points, and (2) a list of
+            corresponding bifurcation types.
         """
 
         if not ignore:
@@ -833,6 +839,7 @@ class ODESystem:
         plt.sca(ax)
 
         # draw bifurcation points
+        points, labels = ax.get_legend_handles_labels()
         for bf, x, y in zip(solution_types.values, x_vals.values, y_vals.values):
             if bf not in "EPMXRG" and bf not in ignore:
                 if bf in bf_styles:
@@ -842,11 +849,21 @@ class ODESystem:
                     m = default_marker
                     c = default_color
                 if y.shape and np.sum(y.shape) > 1:
-                    plt.scatter(x, y.max(), s=default_size, marker=m, c=c)
-                    plt.scatter(x, y.min(), s=default_size, marker=m, c=c)
+                    if bf not in labels:
+                        line = plt.plot(x, y.max(), markersize=default_size, marker=m, c=c, label=bf)
+                        points.append(line[0])
+                        labels.append(bf)
+                    else:
+                        plt.plot(x, y.max(), markersize=default_size, marker=m, c=c)
+                    plt.plot(x, y.min(), markersize=default_size, marker=m, c=c)
                 else:
-                    plt.scatter(x, y, s=default_size, marker=m, c=c)
-        return ax
+                    if bf not in labels:
+                        line = plt.plot(x, y, markersize=default_size, marker=m, c=c, label=bf)
+                        points.append(line[0])
+                        labels.append(bf)
+                    else:
+                        plt.plot(x, y, markersize=default_size, marker=m, c=c)
+        return points, labels
 
     def update_bifurcation_style(self, bf_type: str, marker: str = None, color: str = None) -> None:
         """Update the default marker and color of a given special solution type.

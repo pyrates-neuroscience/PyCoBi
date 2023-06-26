@@ -120,7 +120,7 @@ hopf_sols, hopf_cont = ode.run(
 
 fig, ax = plt.subplots()
 ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta", ax=ax)
-ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta_hopf", ax=ax)
+ode.plot_continuation("p/qif_sfa_op/eta", "p/qif_sfa_op/r", cont="eta_hopf", ax=ax, ignore=["UZ", "BP"])
 plt.show()
 
 # %%
