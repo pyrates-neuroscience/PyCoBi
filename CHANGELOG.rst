@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.4
+~~~~~
+
+- updates to `ODESystem.extract` and the plotting functions that use it: Users can now flexibly switch between using the parameter/variable indices when specifying the variables to plot, or whether they want to use the pyrates-style naming scheme
+
 0.8.3
 ~~~~~
 

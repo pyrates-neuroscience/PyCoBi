@@ -306,13 +306,8 @@ class ODESystem:
             origin = origin.pycobi_key
 
         # call to auto
-        constant_file = auto_kwargs.pop('c', None)
         auto_kwargs = self._map_auto_kwargs(auto_kwargs)
-        if constant_file:
-            solution = self._call_auto(starting_point, origin, c=constant_file, **auto_kwargs)
-            auto_kwargs['c'] = constant_file
-        else:
-            solution = self._call_auto(starting_point, origin, **auto_kwargs)
+        solution = self._call_auto(starting_point, origin, **auto_kwargs)
 
         # extract information from auto solution
         ########################################
@@ -553,7 +548,7 @@ class ODESystem:
 
         return solution_name, s
 
-    def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> DataFrame:
+    def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
         """Extract properties from a solution.
 
         Parameters
@@ -567,15 +562,17 @@ class ODESystem:
 
         Returns
         -------
-        DataFrame
-            Contains the requested properties of the solution.
+        tuple
+            Tuple with 2 entries: (1) a DataFrame that contains the requested properties of the solution. (2) A map
+            between the passed parameter/variable keys and the column names in the DataFrame.
         """
         summary = self.get_summary(cont, point=point)
         columns = [k for k, _ in list(summary.keys())]
-        keys = [key if key in columns else self._var_map_inv[key] for key in keys]
+        keys_new = [key if key in columns else self._var_map_inv[key] for key in keys]
+        key_map = {key_old: key_new for key_old, key_new in zip(keys, keys_new)}
         if point:
-            return summary.loc[point, keys]
-        return summary.loc[:, keys]
+            return summary.loc[point, keys_new], key_map
+        return summary.loc[:, keys_new], key_map
 
     def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
                           force_axis_lim_update: bool = False, bifurcation_legend: bool = True, **kwargs
@@ -613,24 +610,25 @@ class ODESystem:
 
         # extract information from branch solutions
         if x in ["PAR(14)", "t"]:
-            results = self.extract([x, y], cont=cont)
+            results, vmap = self.extract([x, y], cont=cont)
             results['stability'] = np.asarray([True] * len(results[x]))
             results['bifurcation'] = np.asarray(['RG'] * len(results[x]))
         else:
-            results = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
+            results, vmap = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
+        x, y = vmap[x], vmap[y]
 
         # plot bifurcation points
         bifurcation_point_kwargs = ['default_color', 'default_marker', 'default_size', 'custom_bf_styles',
                                     'ignore']
         kwargs_tmp = {key: kwargs.pop(key) for key in bifurcation_point_kwargs if key in kwargs}
-        bfs, labels = self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[x],
-                                                   y_vals=results[y], ax=ax, **kwargs_tmp)
+        self.plot_bifurcation_points(solution_types=results['bifurcation'], x_vals=results[x],
+                                     y_vals=results[y], ax=ax, **kwargs_tmp)
 
         # set title variable if passed
         tvar = kwargs.pop('title_var', None)
         if tvar:
-            tvar_results = self.extract([tvar], cont=cont)
-            tval = tvar_results[tvar][0]
+            tvar_results, tmap = self.extract([tvar], cont=cont)
+            tval = tvar_results[tmap[tvar]][0]
             ax.set_title(f"{tvar} = {tval}")
 
         # plot main continuation
@@ -665,7 +663,7 @@ class ODESystem:
         ax
             Axis in which to plot the data. If not provided, a new figure will be created.
         force_axis_lim_update
-            If true, the axis limits of x and y axis will be updated after creating the line plots.
+            If true, the axis limits of x and y-axis will be updated after creating the line plots.
         cutoff
             Initial time to be disregarded for plotting.
         kwargs
@@ -679,18 +677,21 @@ class ODESystem:
 
         # extract information from branch solutions
         try:
-            results = self.extract(list(variables) + ['stability'], cont=cont, point=point)
+            results, vmap = self.extract(list(variables) + ['stability'], cont=cont, point=point)
         except KeyError:
-            results = self.extract(list(variables), cont=cont, point=point)
+            results, vmap = self.extract(list(variables), cont=cont, point=point)
             results['stability'] = None
+        variables = [vmap[v] for v in variables]
 
         # apply cutoff, if passed
         if cutoff:
             try:
-                time = self.extract(['PAR(14)'], cont=cont, point=point)['PAR(14)']
+                time, _ = self.extract(['t'], cont=cont, point=point)
+                time = time['t']
             except KeyError:
                 try:
-                    time = self.extract(['time'], cont=cont, point=point)['time']
+                    time, _ = self.extract(['time'], cont=cont, point=point)
+                    time = time['time']
                 except KeyError:
                     raise ValueError("Could not find time variable on solution to apply cutoff to. Please consider "
                                      "adding the keyword argument `get_timeseries` to the `PyCoBi.run()` call for which"
@@ -775,7 +776,7 @@ class ODESystem:
         if not points:
             points = ['RG']
             points_tmp = self.results[self._results_map[cont] if type(cont) is str else cont].keys()
-            results_tmp = [self.extract([var] + ['time'], cont=cont, point=p) for p in points_tmp]
+            results_tmp, vmap = [self.extract([var] + ['time'], cont=cont, point=p) for p in points_tmp]
             results = [{key: [] for key in results_tmp[0].keys()}]
             for r in results_tmp:
                 for key in r:
@@ -783,7 +784,12 @@ class ODESystem:
             for key in results[0].keys():
                 results[0][key] = np.asarray(results[0][key]).squeeze()
         else:
-            results = [self.extract([var] + ['time'], cont=cont, point=p) for p in points]
+            results = []
+            vmap = {}
+            for p in points:
+                r, vmap = self.extract([var] + ['time'], cont=cont, point=p)
+                results.append(r)
+        var = vmap[var]
 
         # create plot
         if ax is None:
