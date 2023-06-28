@@ -19,6 +19,8 @@ class ODESystem:
                  "_branches", "_bifurcation_styles", "_temp", "additional_attributes", "_eq", "_var_map",
                  "_var_map_inv"]
 
+    blocked_indices = (10, 15)
+
     def __init__(self, eq_file: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
                  params: list = None, state_vars: list = None, **kwargs) -> None:
         """
@@ -92,8 +94,14 @@ class ODESystem:
         self._var_map = {"t": {"cont": 14, "plot": "PAR(14)"}}
         self._var_map_inv = {}
         if params:
+            increment = 1
             for i, key in enumerate(params):
-                self._var_map[key] = {"cont": i+1, "plot": f"PAR({i+1})"}
+                idx = i + increment
+                if self.blocked_indices[0] <= idx <= self.blocked_indices[1]:
+                    idx -= increment
+                    increment += self.blocked_indices[1] - self.blocked_indices[0]
+                    idx += increment
+                self._var_map[key] = {"cont": idx, "plot": f"PAR({idx})"}
         if state_vars:
             for i, key in enumerate(state_vars):
                 self._var_map[key] = {"cont": i+1, "plot": f"U({i+1})"}

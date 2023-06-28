@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.3
+~~~~~
+
+- Bug fix for the new parameter naming system: `ODESystem` now accounts for the blocked Auto-07p parameter vector entries
+
 0.8.2
 ~~~~~
 
