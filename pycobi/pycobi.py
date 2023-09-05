@@ -244,8 +244,8 @@ class ODESystem:
 
     def run(self, origin: Union[int, str, object] = None, starting_point: Union[str, int] = None, variables: list = None,
             params: list = None, get_stability: bool = True, get_period: bool = False, get_timeseries: bool = False,
-            get_eigenvals: bool = False, get_lyapunov_exp: bool = False, bidirectional: bool = False, name: str = None,
-            **auto_kwargs) -> tuple:
+            get_eigenvals: bool = False, get_lyapunov_exp: bool = False, reduce_limit_cycle: bool = True, 
+            bidirectional: bool = False, name: str = None, **auto_kwargs) -> tuple:
         """
         Wraps auto-07p command `run` and stores requested solution details on instance.
 
@@ -272,6 +272,10 @@ class ODESystem:
             key 'eigenvalues'.
         get_lyapunov_exp
             If true, the local lyapunov exponents of solutions will be stored under the key 'lyapunov'.
+        reduce_limit_cycle
+            If true, the values of each state variable will be reduced to the minimum and maximum for limit cycle 
+            solutions. Else, the state variable values will be stored for multiple discretized points along the limit
+            cycle solution (number depends on the arguments passed to Auto).
         bidirectional
             If true, parameter continuation will be performed into both directions for a given continuation parameter.
         name
@@ -332,7 +336,8 @@ class ODESystem:
             get_stability = False
         summary = self._create_summary(solution=solution, points=new_points, variables=variables,
                                        params=params, timeseries=get_timeseries, stability=get_stability,
-                                       period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp)
+                                       period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp,
+                                       reduce_limit_cycle=reduce_limit_cycle)
 
         # store solution and extracted information in pycobi
         ####################################################
@@ -909,7 +914,8 @@ class ODESystem:
             self._bifurcation_styles.update({bf_type: {'marker': marker, 'color': color}})
 
     def _create_summary(self, solution: Union[Any, dict], points: list, variables: list, params: list,
-                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool
+                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool, 
+                        reduce_limit_cycle: bool
                         ) -> DataFrame:
         """Creates summary of auto continuation and stores it in dictionary.
 
@@ -956,10 +962,15 @@ class ODESystem:
                 # store parameter and variable information
                 branch, _ = get_branch_info(s)
                 for var, val in zip(variables, var_vals):
-                    for i, v in enumerate(val):
-                        data_2d_tmp.append(v)
+                    if len(val) > 1 and reduce_limit_cycle:
+                        data_2d_tmp.extend([np.min(val), np.max(val)])
                         if add_columns:
-                            columns_2d.append((var, i))
+                            columns_2d.extend([(var, 0), (var, 1)])
+                    else:
+                        for i, v in enumerate(val):
+                            data_2d_tmp.append(v)
+                            if add_columns:
+                                columns_2d.append((var, i))
                 for param, val in zip(params, param_vals):
                     data_1d_tmp.append(val)
                     if add_columns:
