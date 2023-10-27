@@ -10,6 +10,9 @@ Changelog
 - updated readthedocs configuration
 - updates to `ODESystem.extract` and the plotting functions that use it: Users can now flexibly switch between using the parameter/variable indices when specifying the variables to plot, or whether they want to use the pyrates-style naming scheme
 - added option to `ODESystem.run` to store only the minimum and maximum of each selected state variable for periodic solutions (set keyword argument `reduce_limit_cycle=True`)
+- debugged scenario where initial condition was run, but not explicitly labeled, which caused issues with extracting starting points from the solution branch
+- debugged issue with selecting specific variables and parameters that should be saved in the continuation summary
+- added private method `ODESystem._map_var` that ensures stable mapping between user-provided variable names and intrinsic variable names
 
 0.8.3
 ~~~~~

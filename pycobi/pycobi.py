@@ -159,10 +159,16 @@ class ODESystem:
             `ODESystem` instance.
         """
 
+        # change working directory
+        if working_dir:
+            try:
+                os.chdir(working_dir)
+            except FileNotFoundError:
+                os.chdir(f"{os.getcwd()}/{working_dir}")
+
         # preparations
         func_name = kwargs.pop("func_name", "vector_field")
         file_name = kwargs.pop("file_name", "system_equations")
-        file_name_full = f"{working_dir}/{file_name}" if working_dir else file_name
         dt = kwargs.pop("step_size", 1e-3)
         solver = kwargs.pop("solver", "scipy")
         if init_kwargs is None:
@@ -178,14 +184,13 @@ class ODESystem:
             template.update_var(edge_vars=kwargs.pop("edge_vars"))
 
         # generate fortran files
-        _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name_full, backend="fortran",
+        _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name, backend="fortran",
                                                          float_precision="float64", auto=True, vectorize=False,
                                                          solver=solver, **kwargs)
 
         # initialize ODESystem
-        return cls(working_dir=working_dir, auto_dir=auto_dir, init_cont=init_cont, e=file_name, c="ivp",
-                   template=template, params=params[3:], state_vars=list(state_vars), eq_file=file_name_full,
-                   **init_kwargs)
+        return cls(auto_dir=auto_dir, init_cont=init_cont, c="ivp", eq_file=file_name, template=template,
+                   params=params[3:], state_vars=list(state_vars), **init_kwargs)
 
     @classmethod
     def from_file(cls, filename: str, auto_dir: str = None):
@@ -293,7 +298,7 @@ class ODESystem:
         ###########
 
         # extract starting point of continuation
-        if self._last_cont == 0:
+        if self._last_cont == 0 and self._last_cont not in self.auto_solutions:
             auto_kwargs["e"] = self._eq
         if 'IRS' in auto_kwargs or 's' in auto_kwargs:
             raise ValueError('Usage of keyword arguments `IRS` and `s` is disabled in pycobi. To start from a previous'
@@ -324,12 +329,14 @@ class ODESystem:
         _, solution_tmp = self.get_solution(point=new_points[0], cont=solution)
         if variables is None:
             variables = self._get_all_var_keys(solution_tmp)
+        variables = [self._map_var(v, mode="plot") for v in variables]
         if params is None:
             try:
                 params = self._get_all_param_keys(solution_tmp)
             except KeyError:
                 n_params = auto_kwargs['NPAR']
                 params = [f"PAR({i})" for i in range(1, n_params+1)]
+        params = [self._map_var(p, mode="plot") for p in params]
 
         # extract continuation results
         if new_icp[0] == 14:
@@ -1048,18 +1055,24 @@ class ODESystem:
         if "ICP" in kwargs:
             val = kwargs.pop("ICP")
             if type(val) is str:
-                kwargs["ICP"] = self._var_map[val]["cont"]
+                kwargs["ICP"] = self._map_var(val)
             elif type(val) in [list, tuple]:
-                kwargs["ICP"] = [self._var_map[v]["cont"] if type(v) is str else v for v in val]
+                kwargs["ICP"] = [self._map_var(v) if type(v) is str else v for v in val]
             else:
                 kwargs["ICP"] = val
 
         # handle the user-point parameter
         if "UZR" in kwargs:
             uzr_dict = kwargs.pop("UZR")
-            kwargs["UZR"] = {self._var_map[key]["cont"] if type(key) is str else key: val for key, val in uzr_dict.items()}
+            kwargs["UZR"] = {self._map_var(key) if type(key) is str else key: val for key, val in uzr_dict.items()}
 
         return kwargs
+
+    def _map_var(self, var: str, mode: str = "cont") -> str:
+        try:
+            return self._var_map[var][mode]
+        except KeyError:
+            return var
 
     def _to_dataframe(self, data: list, columns: Union[list, tuple], index: list) -> DataFrame:
 
