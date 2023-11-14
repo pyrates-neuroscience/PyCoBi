@@ -129,14 +129,14 @@ class ODESystem:
         os.chdir(self._orig_dir)
 
     @classmethod
-    def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
-                  init_kwargs: dict = None, **kwargs):
+    def from_template(cls, template: Union[str, CircuitTemplate], working_dir: str = None, auto_dir: str = None, 
+                      init_cont: bool = True, init_kwargs: dict = None, **kwargs):
         """
 
         Parameters
         ----------
-        path
-            Path to a YAML model definition file.
+        template
+            Path to a YAML model definition file or a `pyrates.CircuitTemplate` instance.
         working_dir
             Directory in which all the fortran equation and auto-07p constant files are saved.
         auto_dir
@@ -175,7 +175,8 @@ class ODESystem:
             init_kwargs = {}
 
         # initialize circuit template
-        template = CircuitTemplate.from_yaml(path)
+        if type(template) is str:
+            template = CircuitTemplate.from_yaml(template)
 
         # update circuit template variables
         if "node_vars" in kwargs:

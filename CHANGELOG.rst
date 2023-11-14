@@ -7,6 +7,11 @@ Changelog
 0.8.4
 ~~~~~
 
+- added option to pass a `pyrates.CircuitTemplate` instance to the `ODESystem.from_template` method instead of a path to a YAML template
+
+0.8.4
+~~~~~
+
 - updated readthedocs configuration
 - updates to `ODESystem.extract` and the plotting functions that use it: Users can now flexibly switch between using the parameter/variable indices when specifying the variables to plot, or whether they want to use the pyrates-style naming scheme
 - added option to `ODESystem.run` to store only the minimum and maximum of each selected state variable for periodic solutions (set keyword argument `reduce_limit_cycle=True`)
