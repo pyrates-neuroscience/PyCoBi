@@ -4,10 +4,12 @@ Changelog
 0.8
 ---
 
-0.8.4
+0.8.5
 ~~~~~
 
-- added option to pass a `pyrates.CircuitTemplate` instance to the `ODESystem.from_template` method instead of a path to a YAML template
+- added a method `ODESystem.from_template` that allows to instantiate `ODESystem` from a `pyrates.CircuitTemplate`
+- method `ODESystem.from_yaml` now creates a `pyrates.CircuitTemplate` from a YAML file first, and then passes it to `ODESystem.from_template`
+- updated CircleCI config: Dropped support for Python 3.6, added support for Python 3.10
 
 0.8.4
 ~~~~~

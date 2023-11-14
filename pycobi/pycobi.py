@@ -129,14 +129,48 @@ class ODESystem:
         os.chdir(self._orig_dir)
 
     @classmethod
-    def from_template(cls, template: Union[str, CircuitTemplate], working_dir: str = None, auto_dir: str = None, 
-                      init_cont: bool = True, init_kwargs: dict = None, **kwargs):
+    def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
+                  init_kwargs: dict = None, **kwargs):
+        """Instantiates `ODESystem` from a YAML definition file.
+
+        Parameters
+        ----------
+        path
+            Full path to a YAML model definition file for a `pyrates.CircuitTemplate`.
+        working_dir
+            Directory in which all the fortran equation and auto-07p constant files are saved.
+        auto_dir
+            Installation directory of auto-07p.
+        init_cont
+            If true, an integration with respect to time will be performed, using the equation file provided via the
+            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
+            and the auto constants provided via the keyword argument `c=<fname>`
+            (a file named `c.<fname>` should exist in `working_dir`).
+        init_kwargs
+            Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
+            integration.
+        kwargs
+            Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
+            generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
+
+        Returns
+        -------
+        ODESystem
+            `ODESystem` instance.
         """
+
+        return cls.from_template(CircuitTemplate.from_yaml(path), working_dir=working_dir, auto_dir=auto_dir,
+                                 init_cont=init_cont, init_kwargs=init_kwargs, **kwargs)
+
+    @classmethod
+    def from_template(cls, template: CircuitTemplate, working_dir: str = None, auto_dir: str = None,
+                      init_cont: bool = True, init_kwargs: dict = None, **kwargs):
+        """Instantiates `ODESystem` from a `pyrates.CircuitTemplate`.
 
         Parameters
         ----------
         template
-            Path to a YAML model definition file or a `pyrates.CircuitTemplate` instance.
+            Instance of the class `pyrates.CircuitTemplate`.
         working_dir
             Directory in which all the fortran equation and auto-07p constant files are saved.
         auto_dir
@@ -173,10 +207,6 @@ class ODESystem:
         solver = kwargs.pop("solver", "scipy")
         if init_kwargs is None:
             init_kwargs = {}
-
-        # initialize circuit template
-        if type(template) is str:
-            template = CircuitTemplate.from_yaml(template)
 
         # update circuit template variables
         if "node_vars" in kwargs:
