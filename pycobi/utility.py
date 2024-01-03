@@ -82,7 +82,7 @@ def get_point_idx(diag: list, point: int) -> int:
         diag_tmp = diag[idx]['Text']
         if "Location of special point" in diag_tmp and "Convergence" not in diag_tmp:
             idx += 1
-        elif "NOTE:Retrying step" in diag_tmp:
+        elif "NOTE:Retrying step" in diag_tmp or "Total Time " in diag_tmp:
             idx += 1
         else:
 

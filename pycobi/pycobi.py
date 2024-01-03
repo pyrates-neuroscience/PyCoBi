@@ -357,7 +357,7 @@ class ODESystem:
         new_points = get_solution_keys(solution)
 
         # get all passed variables and params
-        _, solution_tmp = self.get_solution(point=new_points[0], cont=solution)
+        solution_tmp, *_ = self.get_solution(point=new_points[0], cont=solution)
         if variables is None:
             variables = self._get_all_var_keys(solution_tmp)
         variables = [self._map_var(v, mode="plot") for v in variables]
@@ -369,14 +369,6 @@ class ODESystem:
                 params = [f"PAR({i})" for i in range(1, n_params+1)]
         params = [self._map_var(p, mode="plot") for p in params]
 
-        # extract continuation results
-        if new_icp[0] == 14:
-            get_stability = False
-        summary = self._create_summary(solution=solution, points=new_points, variables=variables,
-                                       params=params, timeseries=get_timeseries, stability=get_stability,
-                                       period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp,
-                                       reduce_limit_cycle=reduce_limit_cycle)
-
         # store solution and extracted information in pycobi
         ####################################################
 
@@ -385,16 +377,16 @@ class ODESystem:
                 and new_icp in self._branches[new_branch][origin]:
 
             # get key from old solution and merge with new solution
-            solution_old = self.get_solution(origin)
+            solution_old, *_ = self.get_solution(origin)
             pyauto_key = solution_old.pycobi_key
-            solution, summary = self.merge(pyauto_key, solution, summary, new_icp)
+            solution, new_points = self.merge(pyauto_key, solution, new_icp)
 
         elif name == 'bidirect:cont2' and not bidirectional and 'DS' in auto_kwargs and auto_kwargs['DS'] == '-':
 
             # get key from old solution and merge with new solution
             solution_old = self.auto_solutions[self._last_cont]
             pyauto_key = solution_old.pycobi_key
-            solution, summary = self.merge(pyauto_key, solution, summary, new_icp)
+            solution, new_points = self.merge(pyauto_key, solution, new_icp)
 
         else:
 
@@ -413,7 +405,7 @@ class ODESystem:
         self._last_cont = pyauto_key
         self._branches[new_branch][pyauto_key].append(new_icp)
 
-        self.results[pyauto_key] = summary
+        # store key of continuation results
         self._cont_num = len(self.auto_solutions)
         if name and name != 'bidirect:cont2':
             self._results_map[name] = pyauto_key
@@ -422,15 +414,28 @@ class ODESystem:
         ######################################################################################################
 
         if bidirectional:
+
+            # perform continuation in opposite direction
             auto_kwargs.pop('DS', None)
             _, solution = self.run(origin, starting_point, variables=variables, params=params,
                                    get_stability=get_stability, get_period=get_period, get_timeseries=get_timeseries,
                                    get_eigenvals=get_eigenvals, get_lyapunov_exp=get_lyapunov_exp, bidirectional=False,
                                    name='bidirect:cont2', DS='-', **auto_kwargs)
 
+        else:
+
+            # store summary of continuation results
+            if new_icp[0] == 14:
+                get_stability = False
+            summary = self._create_summary(solution=solution, points=new_points, variables=variables,
+                                           params=params, timeseries=get_timeseries, stability=get_stability,
+                                           period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp,
+                                           reduce_limit_cycle=reduce_limit_cycle)
+            self.results[pyauto_key] = summary
+
         return self.results[pyauto_key], solution
 
-    def merge(self, key: int, cont, summary: DataFrame, icp: tuple):
+    def merge(self, key: int, cont, icp: tuple):
         """Merges two solutions from two separate auto continuations.
 
         Parameters
@@ -440,8 +445,6 @@ class ODESystem:
             continuation.
         cont
             auto continuation object that should be merged with the continuation object under `key`.
-        summary
-            PyCoBi continuation summary that should be merged with continuation summary under `key`.
         icp
             Continuation parameter that was used in both continuations that are to be merged.
         """
@@ -457,42 +460,10 @@ class ODESystem:
         self.auto_solutions[key] = solution
         self._last_cont = solution
 
-        # merge results summaries
-        #########################
+        # extract solution points
+        points = list(solution.data[0].labels.by_index.keys())
 
-        summary_old = self.results[key]
-
-        # extract end points
-        points_old, points_new = summary_old.index, summary.index
-        start_old, start_new, end_old, end_new = points_old[0], points_new[0], points_old[-1], points_new[-1]
-
-        # extract ICP values
-        key = f"PAR({icp[0]})"
-        if key in self._var_map_inv:
-            key = self._var_map_inv[key]
-        icp_old = summary_old.loc[end_old, key].values[0]
-        icp_new = summary.loc[end_new, key].values[0]
-
-        # connect starting points of both continuations and re-label points accordingly
-        if icp_new < icp_old:
-            conts_sorted = [summary, summary_old]
-            keys_sorted = [points_new, points_old]
-        else:
-            conts_sorted = [summary_old, summary]
-            keys_sorted = [points_old, points_new]
-        end_point = keys_sorted[0][-1]
-
-        # move points into combined summary
-        summary_final = {}
-        for p1, p2 in zip(keys_sorted[0], keys_sorted[0][::-1]):
-            summary_final[p1] = _extract_merge_point(p2, conts_sorted[0])
-        for p in keys_sorted[1]:
-            summary_final[p+end_point] = _extract_merge_point(p, conts_sorted[1])
-
-        # store updated summary
-        self.results[key] = DataFrame(summary_final).T
-
-        return solution, self.results[key]
+        return solution, points
 
     def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> DataFrame:
         """Extract summary of continuation from PyCoBi.
@@ -560,36 +531,44 @@ class ODESystem:
         branch, icp = get_branch_info(cont)
 
         if point is None:
-            return cont
+            return cont, None, None
 
         # extract solution point from continuation object and its solution type
         try:
+
+            # extract solution point via string label
             s = cont(point)
-            solution_name = point[:2]
+            solution_name, solution_idx = point[:2], point[2:]
+            solution_idx = int(solution_idx)
+
         except (AttributeError, KeyError, TypeError):
-            for idx in range(len(cont.data)):
-                if type(point) is int:
-                    s = cont[idx].labels.by_index[point]
-                else:
-                    count = 1
-                    for p in cont[idx].labels.by_index.values():
-                        key = list(p)[0]
-                        if key in point and int(point.replace(key, "")) == count:
-                            s = p
-                            break
-                        elif key in point:
-                            count += 1
+
+            # extract solution point via integer index
+            for branch in cont.data:
+                try:
+                    if type(point) is int:
+                        s = branch.labels.by_index[point]
+                        solution_name = list(s.keys())[0]
+                        idx = np.argwhere([p == point for p in branch.labels.by_label[solution_name]]).squeeze()
+                        solution_idx = int(idx + 1)
+                        break
                     else:
-                        raise ValueError(f'Invalid point {point} for continuation with ICP={icp} on branch {branch}.')
-                if s:
-                    solution_name = list(s.keys())[0]
-                    break
+                        s = branch.labels.by_label[point]
+                        solution_name, solution_idx = point[:2], point[2:]
+                        break
+                except (KeyError, IndexError):
+                    continue
             else:
                 raise ValueError(f'Invalid point {point} for continuation with ICP={icp} on branch {branch}.')
-            if solution_name != 'No Label':
-                s = s[solution_name]['solution']
 
-        return solution_name, s
+            # make sure a proper solution was extracted, else return an unlabeled solution
+            if solution_name != 'No Label':
+                try:
+                    s = s[solution_name]['solution']
+                except KeyError:
+                    solution_name = 'No Label'
+
+        return s, solution_name, solution_idx
 
     def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
         """Extract properties from a solution.
@@ -982,7 +961,7 @@ class ODESystem:
             data_1d_tmp = []
 
             # get solution
-            solution_type, s = self.get_solution(cont=solution, point=point)
+            s, solution_type, solution_idx = self.get_solution(cont=solution, point=point)
 
             if solution_type != 'No Label' and solution_type != 'MX':
 
@@ -994,8 +973,10 @@ class ODESystem:
 
                 # store solution type
                 data_1d_tmp.append(solution_type)
+                data_1d_tmp.append(solution_idx)
                 if add_columns:
                     columns_1d.append('bifurcation')
+                    columns_1d.append("bifurcation_index")
 
                 # store parameter and variable information
                 branch, _ = get_branch_info(s)
@@ -1049,20 +1030,23 @@ class ODESystem:
                             if add_columns:
                                 columns_2d.append(('lyapunov_exponents', i))
 
-            data_2d.append(data_2d_tmp)
-            data_1d.append(data_1d_tmp)
-            add_columns = False
+                data_2d.append(data_2d_tmp)
+                data_1d.append(data_1d_tmp)
+                add_columns = False
 
         # arrange data into DataFrame
         df = self._to_dataframe(data_2d, columns=columns_2d, index=indices)
         df2 = self._to_dataframe(data_1d, columns=columns_1d, index=indices)
         for i, key in enumerate(df2.columns.values):
             df[key] = df2.loc[:, key]
+
         return df
 
     def _call_auto(self, starting_point: Union[str, int], origin: Union[Any, dict], **auto_kwargs) -> Any:
         if starting_point:
-            _, s = self.get_solution(point=starting_point, cont=origin)
+            s, solution_name, _ = self.get_solution(point=starting_point, cont=origin)
+            if solution_name == "No Label":
+                raise KeyError(f"Starting point {starting_point} could not be found on the provided origin branch.")
             solution = self._auto.run(s, **auto_kwargs)
         else:
             solution = self._auto.run(**auto_kwargs)

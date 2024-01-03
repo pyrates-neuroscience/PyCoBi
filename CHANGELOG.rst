@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.6
+~~~~~
+
+- updated how summaries of solution branches are generated to save computation time (results are now merged first, such that a summary is created only once)
+
 0.8.5
 ~~~~~
 
