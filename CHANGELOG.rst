@@ -8,6 +8,8 @@ Changelog
 ~~~~~
 
 - updated how summaries of solution branches are generated to save computation time (results are now merged first, such that a summary is created only once)
+- fixed a minor bug with the extraction of solutions via their keys
+- improved how the continuation direction for automated bidirectional continuations is handled
 
 0.8.5
 ~~~~~

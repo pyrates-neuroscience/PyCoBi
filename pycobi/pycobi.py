@@ -416,11 +416,11 @@ class ODESystem:
         if bidirectional:
 
             # perform continuation in opposite direction
-            auto_kwargs.pop('DS', None)
+            ds = auto_kwargs.pop('DS', None)
             _, solution = self.run(origin, starting_point, variables=variables, params=params,
                                    get_stability=get_stability, get_period=get_period, get_timeseries=get_timeseries,
                                    get_eigenvals=get_eigenvals, get_lyapunov_exp=get_lyapunov_exp, bidirectional=False,
-                                   name='bidirect:cont2', DS='-', **auto_kwargs)
+                                   name='bidirect:cont2', DS=1e-3 if ds == '-' else '-', **auto_kwargs)
 
         else:
 
@@ -559,7 +559,9 @@ class ODESystem:
                 except (KeyError, IndexError):
                     continue
             else:
-                raise ValueError(f'Invalid point {point} for continuation with ICP={icp} on branch {branch}.')
+                s = None
+                solution_name = 'No Label'
+                solution_idx = 0
 
             # make sure a proper solution was extracted, else return an unlabeled solution
             if solution_name != 'No Label':
