@@ -215,8 +215,9 @@ class ODESystem:
             template.update_var(edge_vars=kwargs.pop("edge_vars"))
 
         # generate fortran files
+        prec = kwargs.pop("float_precision", "float64")
         _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name, backend="fortran",
-                                                         float_precision="float64", auto=True, vectorize=False,
+                                                         float_precision=prec, auto=True, vectorize=False,
                                                          solver=solver, **kwargs)
 
         # initialize ODESystem
