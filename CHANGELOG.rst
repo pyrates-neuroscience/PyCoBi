@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.7
+~~~~~
+
+- implemented support for complex variable types. Pass the keyword argument "float_precision=complex" to the `ODESystem.from_yaml` or `.from_template` commands in order to generate complex-valued model files.
+
 0.8.6
 ~~~~~
 
