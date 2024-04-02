@@ -571,6 +571,13 @@ class ODESystem:
                 except KeyError:
                     solution_name = 'No Label'
 
+        except ValueError:
+
+            # extract solution point via string label
+            s = cont(point)
+            solution_name = point
+            solution_idx = 0
+
         return s, solution_name, solution_idx
 
     def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
