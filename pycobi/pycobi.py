@@ -642,6 +642,7 @@ class ODESystem:
 
         # extract information from branch solutions
         if x in ["PAR(14)", "t"]:
+            x = "t"
             results, vmap = self.extract([x, y], cont=cont)
             results['stability'] = np.asarray([True] * len(results[x]))
             results['bifurcation'] = np.asarray(['RG'] * len(results[x]))

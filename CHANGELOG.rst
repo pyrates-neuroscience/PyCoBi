@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.8
+~~~~~
+
+- fixed bug where the plotting method `ODESystem.plot_continuation` would throw an error when `PAR(14)` was used as the time parameter for the x-axis
+
 0.8.7
 ~~~~~
 
