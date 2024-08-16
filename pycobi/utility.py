@@ -110,45 +110,69 @@ def get_point_idx(diag: list, point: int) -> int:
 # extract system state information from auto objects
 ####################################################
 
+def get_point_diagnostics(s: Any) -> str:
+    """Return the Auto-07p string that contains diagnostic data for a particular solution.
 
-def get_solution_stability(branch: Any, solution: Any, point: int) -> bool:
+    Parameters
+    ----------
+    s
+        Solution object on the branch.
+
+    Returns
+    -------
+    str
+        String with solution diagnostics.
+    """
+
+    try:
+
+        diag = s.b.branch.diagnostics.data
+        point_idx = get_point_idx(diag, point=s.b.idx)
+        diag = diag[point_idx]["Text"]
+
+    except AttributeError as e:
+
+        raise e
+        # diag = branch[0].diagnostics.data
+        # point_idx = get_point_idx(diag, point=point)
+        # diag = diag[point_idx]['Text']
+
+    return diag
+
+def get_solution_stability(s: Any) -> bool:
     """Return stability of a solution.
 
     Parameters
     ----------
-    branch
-        Solution branch object as returned by `auto`.
-    solution
+    s
         Solution object on the branch.
-    point
-        Index of the solution on the branch.
 
     Returns
     -------
     bool
         True, if the solution is stable.
     """
-    point_idx = get_point_idx(branch[0].diagnostics.data, point=point)
-    diag = branch[0].diagnostics.data[point_idx]['Text']
+
+    diag = get_point_diagnostics(s)
 
     if "Eigenvalues" in diag:
         diag_line = "Eigenvalues  :   Stable:"
     elif "Multipliers" in diag:
         diag_line = "Multipliers:     Stable:"
     else:
-        return solution.b['solution'].b['PT'] < 0
+        return s.b['solution'].b['PT'] < 0
     idx = diag.find(diag_line) + len(diag_line)
     value = int(diag[idx:].split("\n")[0])
-    target = solution.data['NDIM']
+    target = s.data['NDIM']
     return value >= target
 
 
-def get_solution_variables(solution: Any, variables: list, extract_time: bool = False) -> list:
+def get_solution_variables(s: Any, variables: list, extract_time: bool = False) -> list:
     """Extract state variable values (time series) from a steady-state (periodic) solution object.
 
     Parameters
     ----------
-    solution
+    s
         Solution object as returned by `auto`.
     variables
         Keys of the state variables to be extracted.
@@ -160,21 +184,21 @@ def get_solution_variables(solution: Any, variables: list, extract_time: bool = 
     list
         List of variable values/time series of the provided solution.
     """
-    if hasattr(solution, 'b') and extract_time:
-        solution = solution.b['solution']
-        solutions = [solution.indepvararray]
+    if hasattr(s, 'b') and extract_time:
+        s = s.b['solution']
+        solutions = [s.indepvararray]
     else:
         solutions = []
-    solutions = [solution[v] for v in variables] + solutions
+    solutions = [s[v] for v in variables] + solutions
     return solutions
 
 
-def get_solution_params(solution: Any, params: list) -> list:
+def get_solution_params(s: Any, params: list) -> list:
     """Extract parameter values from a solution object.
 
     Parameters
     ----------
-    solution
+    s
         Solution object as returned by `auto`.
     params
         Keys of the parameters to be extracted.
@@ -184,17 +208,17 @@ def get_solution_params(solution: Any, params: list) -> list:
     list
         List of parameter values.
     """
-    if hasattr(solution, 'b'):
-        solution = solution.b['solution']
-    return [solution[p] for p in params]
+    if hasattr(s, 'b'):
+        s = s.b['solution']
+    return [s[p] for p in params]
 
 
-def get_solution_eigenvalues(solution: Any, branch: int, point: int) -> list:
+def get_solution_eigenvalues(s: Any, branch: int, point: int) -> list:
     """Extracts eigenvalue spectrum from a solution point on a branch of solutions.
 
     Parameters
     ----------
-    solution
+    s
         Solution object as returned by `auto`.
     branch
         Branch ID as assigned by `auto`.
@@ -210,8 +234,7 @@ def get_solution_eigenvalues(solution: Any, branch: int, point: int) -> list:
     eigenvals = []
 
     # extract point index from diagnostics
-    point_idx = get_point_idx(solution[0].diagnostics, point=point)
-    diag = solution[0].diagnostics.data[point_idx]['Text']
+    diag = get_point_diagnostics(s)
 
     if "NOTE:No converge" in diag:
         return eigenvals

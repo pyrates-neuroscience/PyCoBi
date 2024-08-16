@@ -8,6 +8,9 @@ Changelog
 ~~~~~
 
 - fixed bug where the plotting method `ODESystem.plot_continuation` would throw an error when `PAR(14)` was used as the time parameter for the x-axis
+- fixed bug where the merging of branches caused the wrong diagnostic files to be pulled up for determining the solution stability / eigenvalue spectrum
+- added a new utility function `get_point_diagnostics` in utility.py that extracts the correct diagnostics file from the Auto-07p output for a given solution
+- changed `get_solution_stability` and `get_solution_eigenvalues` to use the new function in utility.py
 
 0.8.7
 ~~~~~

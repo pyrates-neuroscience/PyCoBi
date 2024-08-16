@@ -540,7 +540,7 @@ class ODESystem:
             # extract solution point via string label
             s = cont(point)
             solution_name, solution_idx = point[:2], point[2:]
-            solution_idx = int(solution_idx)
+            solution_idx = int(solution_idx) if len(solution_idx) > 0 else 0
 
         except (AttributeError, KeyError, TypeError):
 
@@ -570,13 +570,6 @@ class ODESystem:
                     s = s[solution_name]['solution']
                 except KeyError:
                     solution_name = 'No Label'
-
-        except ValueError:
-
-            # extract solution point via string label
-            s = cont(point)
-            solution_name = point
-            solution_idx = 0
 
         return s, solution_name, solution_idx
 
@@ -1014,7 +1007,7 @@ class ODESystem:
 
                 # store stability information
                 if stability:
-                    data_1d_tmp.append(get_solution_stability(solution, s, point))
+                    data_1d_tmp.append(get_solution_stability(s))
                     if add_columns:
                         columns_1d.append('stability')
 
@@ -1029,7 +1022,7 @@ class ODESystem:
 
                 # store information about local eigenvalues/lyapunov exponents
                 if eigenvals or lyapunov_exp:
-                    evs = get_solution_eigenvalues(solution, branch, point)
+                    evs = get_solution_eigenvalues(s, branch, point)
                     if eigenvals:
                         for i, v in enumerate(evs):
                             data_2d_tmp.append(evs)
