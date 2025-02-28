@@ -4,6 +4,11 @@ Changelog
 0.8
 ---
 
+0.8.9
+~~~~~
+
+- added the option to not extract stability information for plotting solutions to `ODESystem.plot_continuation`
+
 0.8.8
 ~~~~~
 

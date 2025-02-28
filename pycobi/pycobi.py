@@ -600,8 +600,8 @@ class ODESystem:
         return summary.loc[:, keys_new], key_map
 
     def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
-                          force_axis_lim_update: bool = False, bifurcation_legend: bool = True, **kwargs
-                          ) -> LineCollection:
+                          force_axis_lim_update: bool = False, bifurcation_legend: bool = True,
+                          get_stability: bool = True, **kwargs) -> LineCollection:
         """Line plot of 1D/2D parameter continuations and the respective codimension 1/2 bifurcations.
 
         Parameters
@@ -618,6 +618,8 @@ class ODESystem:
             If true, the axis limits of x and y axis will be updated after creating the line plots.
         bifurcation_legend
             If true, a legend will be plotted that lists the type of all special solutions on a continuation curve.
+        get_stability
+            If true, the stability of the solutions will be indicated via different line styles.
         kwargs
             Additional keyword arguments that allow to control the appearance of the line plot.
 
@@ -639,8 +641,11 @@ class ODESystem:
             results, vmap = self.extract([x, y], cont=cont)
             results['stability'] = np.asarray([True] * len(results[x]))
             results['bifurcation'] = np.asarray(['RG'] * len(results[x]))
-        else:
+        elif get_stability:
             results, vmap = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
+        else:
+            results, vmap = self.extract([x, y, 'bifurcation'], cont=cont)
+            results['stability'] = np.asarray([True] * len(results[x]))
         x, y = vmap[x], vmap[y]
 
         # plot bifurcation points
