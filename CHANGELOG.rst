@@ -4,6 +4,12 @@ Changelog
 0.8
 ---
 
+0.8.10
+~~~~~
+
+- added requirement for numpy >= 2.0
+- dropped support for python versions 3.8 and older due to new numpy requirements
+
 0.8.9
 ~~~~~
 
