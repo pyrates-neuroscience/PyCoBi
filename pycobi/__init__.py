@@ -29,7 +29,7 @@
 
 __author__ = "Richard Gast"
 __status__ = "Development"
-__version__ = "0.8.8"
+__version__ = "0.8.9-dev0"
 
 from .pycobi import ODESystem
 from .utility import get_lyapunov_exponents, get_solution_eigenvalues, fractal_dimension
