@@ -5,52 +5,6 @@ version: 2.1
 # Define a job to be invoked later in a workflow.
 # See: https://circleci.com/docs/2.0/configuration-reference/#jobs
 jobs:
-  p37:
-    docker:
-      - image: cimg/python:3.7.12
-    steps:
-      - checkout
-      - run:
-          command: |
-            sudo apt-get update
-            sudo apt-get install gfortran libmotif-dev
-      - run:
-          command: |
-            git clone https://github.com/auto-07p/auto-07p
-            cd auto-07p
-            ./configure
-            make
-            python setup.py install
-            cd ..
-      - run: pip install --upgrade pip
-      - run: pip install .[dev]
-      - run:
-          command: |
-            cd pycobi_tests
-            pytest --auto_dir /home/circleci/project/auto-07p test_odesystem.py
-  p38:
-    docker:
-      - image: cimg/python:3.8.12
-    steps:
-      - checkout
-      - run:
-          command: |
-            sudo apt-get update
-            sudo apt-get install gfortran libmotif-dev
-      - run:
-          command: |
-            git clone https://github.com/auto-07p/auto-07p
-            cd auto-07p
-            ./configure
-            make
-            python setup.py install
-            cd ..
-      - run: pip install --upgrade pip
-      - run: pip install .[dev]
-      - run:
-          command: |
-            cd pycobi_tests
-            pytest --auto_dir /home/circleci/project/auto-07p test_odesystem.py
   p39:
     docker:
       - image: cimg/python:3.9.10
@@ -60,15 +14,15 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install gfortran libmotif-dev
+      - run: pip install --upgrade pip
       - run:
           command: |
             git clone https://github.com/auto-07p/auto-07p
             cd auto-07p
             ./configure
             make
-            python setup.py install
+            pip install .
             cd ..
-      - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run:
           command: |
@@ -83,28 +37,49 @@ jobs:
           command: |
             sudo apt-get update
             sudo apt-get install gfortran libmotif-dev
+      - run: pip install --upgrade pip
       - run:
           command: |
             git clone https://github.com/auto-07p/auto-07p
             cd auto-07p
             ./configure
             make
-            python setup.py install
+            pip install .
             cd ..
-      - run: pip install --upgrade pip
       - run: pip install .[dev]
       - run:
           command: |
             cd pycobi_tests
             pytest --auto_dir /home/circleci/project/auto-07p test_odesystem.py
-
+  p311:
+    docker:
+      - image: cimg/python:3.11.12
+    steps:
+      - checkout
+      - run:
+          command: |
+            sudo apt-get update
+            sudo apt-get install gfortran libmotif-dev
+      - run: pip install --upgrade pip
+      - run:
+          command: |
+            git clone https://github.com/auto-07p/auto-07p
+            cd auto-07p
+            ./configure
+            make
+            pip install .
+            cd ..
+      - run: pip install .[dev]
+      - run:
+          command: |
+            cd pycobi_tests
+            pytest --auto_dir /home/circleci/project/auto-07p test_odesystem.py
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
 workflows:
   pycobi: # This is the name of the workflow, feel free to change it to better match your workflow.
     # Inside the workflow, you define the jobs you want to run.
     jobs:
-      - p37
-      - p38
       - p39
       - p310
+      - p311
