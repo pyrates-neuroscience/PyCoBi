@@ -8,6 +8,7 @@ Changelog
 ~~~~~
 
 - added the option to not extract stability information for plotting solutions to `ODESystem.plot_continuation`
+- updated version dependency on numpy (enforced by issues between the newest version of numpy and Auto-07p)
 
 0.8.8
 ~~~~~
