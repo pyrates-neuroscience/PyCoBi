@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.9 (pyrates_dev) (2)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="ds" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="auto" project-jdk-type="Python SDK" />
   <component name="PyCharmProfessionalAdvertiser">
     <option name="shown" value="true" />
   </component>
