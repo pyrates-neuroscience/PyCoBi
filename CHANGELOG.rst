@@ -1,8 +1,20 @@
 Changelog
 =========
 
+0.9
+---
+
+0.9.0
+~~~~~
+
+- cumulative update based on the user interface updates, complex variable support, and bug fixes since the introduction of `0.8.0`
+- added a use example for the bifurcation analysis of the Jansen Rit model
+
 0.8
 ---
+
+0.8.10
+~~~~~
 
 0.8.10
 ~~~~~
