@@ -78,10 +78,12 @@ jrc.update_var(node_vars={'pc/rpo_e_in/v': 3.052549e-02}) # y1
 jrc.update_var(node_vars={'pc/rpo_i/v': -2.195986e-02})
 jrc.update_var(node_vars={'iin/rpo_e/v': 4.405607e-03 })
 
-# %% PyCobi model initialization:
+# %%
+# PyCobi model initialization:
 jrc_auto = ODESystem.from_template(jrc, auto_dir="~/PycharmProjects/auto-07p", init_cont=False)
 
-# %% Time continuation in PyCobi:
+# %%
+# Time continuation in PyCobi:
 #   - `DS` defines the initial step-size of the time continuation (in ms)
 #   - `DSMIN` defines the minimal step-size of the time continuation (in ms)
 #   - `DSMAX` defines the maximal step-size of the time continuation (in ms)
@@ -94,7 +96,8 @@ t_sols, t_cont = jrc_auto.run(
     c='ivp', name='time', DS=1e-4, DSMIN=1e-10, EPSL=1e-08, EPSU=1e-08, EPSS=1e-06,
     DSMAX=1e-3, NMX=50000, UZR={14: 2.0}, STOP={'UZ1'})
 
-# %% Outputs of the time continuation:
+# %%
+# Outputs of the time continuation:
 #   - t_sols: pandas Dataframe with the summary of the results of the simulation
 #   - t_cont: type 'branch' or 'bifDiag', an auto-07p object that can be used for subsequent parameter continuations
 
@@ -110,8 +113,8 @@ plt.title("Initial state of Jansen-Rit model")
 plt.legend()
 plt.show()
 
-# %% BIFURCATION ANALYSIS
-# 1D parameter continuation in the input parameter 'u':
+# %%
+# We start the bifurcation analysis by running a 1D parameter continuation in the input parameter 'u':
 
 u_sols, u_cont = jrc_auto.run(
     origin=t_cont, 
@@ -155,7 +158,8 @@ u_sols, u_cont = jrc_auto.run(
 jrc_auto.plot_continuation('pc/rpo_e_in/u', 'pc/rpo_e_in/v', cont='u')
 plt.show()
 
-# %% From the 1D continuation in 'u', we see that the steady-state solution undergoes 3 Hopf bifurcations and 2 Fold
+# %%
+# From the 1D continuation in 'u', we see that the steady-state solution undergoes 3 Hopf bifurcations and 2 Fold
 # bifurcations as we decreased the input parameter 'u' from 'u=400'. Below, we switch onto the limit cycle branches
 # emerging from each Hopf bifurcation and continue the limit cycles in 'u':
 
@@ -171,7 +175,8 @@ for i in range(1,4):
                                line_color_stable="green")
 plt.show()
 
-# %% We find the same bistable oscillatory regime that is depicted in Fig.2 of [2]_, where a large-amplitude limit
+# %%
+# We find the same bistable oscillatory regime that is depicted in Fig.2 of [2]_, where a large-amplitude limit
 # cycle co-exists with a small-amplitude limit cycle.
 #
 # This concludes our use example. As a final step, we clear all the temporary files we created and make sure all
