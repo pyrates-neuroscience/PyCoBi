@@ -9,6 +9,7 @@ Changelog
 
 - cumulative update based on the user interface updates, complex variable support, and bug fixes since the introduction of `0.8.0`
 - added a use example for the bifurcation analysis of the Jansen Rit model
+- fixed a bug with `ODESystem.plot_continuation`: for `get_stability=False`, a `KeyError` was sometimes triggered by an incomplete mapping from the Auto-07p parameter names to the PyRates parameter names
 
 0.8
 ---

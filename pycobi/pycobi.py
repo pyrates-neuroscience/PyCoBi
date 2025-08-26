@@ -645,7 +645,7 @@ class ODESystem:
             results, vmap = self.extract([x, y, 'stability', 'bifurcation'], cont=cont)
         else:
             results, vmap = self.extract([x, y, 'bifurcation'], cont=cont)
-            results['stability'] = np.asarray([True] * len(results[x]))
+            results['stability'] = np.asarray([True] * len(results[vmap[x]]))
         x, y = vmap[x], vmap[y]
 
         # plot bifurcation points
