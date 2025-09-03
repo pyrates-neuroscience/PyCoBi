@@ -24,7 +24,12 @@ To use *PyCoBi*, it is required to install [Auto-07p](https://github.com/auto-07
 You can follow these [installation instructions](https://github.com/auto-07p/auto-07p/tree/master/doc) for detailed 
 information on how to install *Auto-07p* in your specific setup.
 Note that it is not required to manually set any path variables, since *PyAuto* will take care of that for you.  
-A typical installation procedure would be the following:
+Additionally, you need to have `ninja-build` installed, which can be done via 
+```shell
+apt install ninja-build
+```
+on Ubuntu.
+A typical installation procedure would proceed the following:
 
 **Step 1:** Clone the *Auto-07p* github repository:
 
@@ -53,7 +58,7 @@ make
 After that, in the same directory, execute the following call from within the Python environment that you would like to use for *PyAuto*
 
 ```shell
-python setup.py install
+pip install ./
 ```
 
 **Step 5:** Install *PyCoBi*

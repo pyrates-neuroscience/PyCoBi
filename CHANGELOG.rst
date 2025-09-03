@@ -4,6 +4,12 @@ Changelog
 0.9
 ---
 
+0.9.1
+~~~~~
+
+- added python package `meson` to requirements to account for issue #3 (https://github.com/pyrates-neuroscience/PyCoBi/issues/3)
+- updated the installation instructions in `README.md`, to account for issue #3 (https://github.com/pyrates-neuroscience/PyCoBi/issues/3)
+
 0.9.0
 ~~~~~
 
