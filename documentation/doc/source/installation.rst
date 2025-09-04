@@ -10,7 +10,8 @@ We recommend to use `Anaconda` to create a new python environment with `Python >
 In addition, `Auto-07p` has to be installed manually, since it is not uploaded at `PyPI` or `Anaconda` at the moment.
 Below, you find standard installation instructions that should work on most systems.
 If you run into problems, check out the specific installation instructions of `Auto-07p <https://github.com/auto-07p/auto-07p>`_
-for your operating system.
+for your operating system. Additionally, you need to have `ninja-build` installed, which can be done via
+:code:`apt install ninja-build` on Ubuntu.
 
 Step 1:
 ~~~~~~~

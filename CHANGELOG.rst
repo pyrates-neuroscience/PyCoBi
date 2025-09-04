@@ -8,7 +8,9 @@ Changelog
 ~~~~~
 
 - added python package `meson` to requirements to account for issue #3 (https://github.com/pyrates-neuroscience/PyCoBi/issues/3)
-- updated the installation instructions in `README.md`, to account for issue #3 (https://github.com/pyrates-neuroscience/PyCoBi/issues/3)
+- updated the installation instructions in `README.md` and readthedocs, to account for issue #3 (https://github.com/pyrates-neuroscience/PyCoBi/issues/3)
+- added a new use example for 1D and 2D parameter continuations of the IK neuron model
+- updated the simple use example in the documentation
 
 0.9.0
 ~~~~~

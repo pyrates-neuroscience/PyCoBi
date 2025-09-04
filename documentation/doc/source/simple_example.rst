@@ -23,8 +23,8 @@ It is governed by 4 parameters:
     - :math:`\Delta` --> the half-width at half maximum of the Lorentzian distribution over the neural excitability
     - :math:`J` --> the strength of the recurrent coupling inside the population
 
-In this tutorial, we will demonstrate how to (1) , (2) perform a simple 1D parameter continuation in
-:math:`\bar \eta`, and (3) plot the corresponding bifurcation diagram.
+In this tutorial, we will demonstrate how to (1) perform a simple 1D parameter continuation in
+:math:`\bar \eta`, and (2) plot the corresponding bifurcation diagram.
 The latter has also been done in [1]_, so you can compare the resulting plot with the results reported by Montbrió et
 al.
 
@@ -56,7 +56,7 @@ The QIF mean-field model comes pre-implemented with `PyRates`, so we can simply 
     auto_dir = "~/projects/auto-07p"
 
     # ODESystem initialization
-    ode, _ = ODESystem.from_yaml(model, auto_dir=auto_dir)
+    ode = ODESystem.from_yaml(model, auto_dir=auto_dir)
 
 If you haven't manually configured your system environment variables such that the Python installation of `auto-07p` is
 recognized by your Python interpreter, you can simply add the installation directory of `auto-07p` to the :code:`ODESystem` instantiation
