@@ -7,6 +7,7 @@ import re
 
 import pytest
 from pycobi import ODESystem, parse_point_diagnostics
+from pycobi.utility import get_branch_info
 from pyrates import clear
 from pytest import fixture, approx, raises
 import numpy as np
@@ -266,6 +267,58 @@ class _MockSol:
     def __init__(self, ndim, pt=None):
         self.data = {'NDIM': ndim}
         self.b = {'PT': pt} if pt is not None else {}
+
+
+def test_1_9_get_branch_info_paths():
+    """`get_branch_info` accepts three call shapes (bifDiag, single-branch dict,
+    IVP-style nested-RG container) and raises a meaningful error when none
+    match. Pins B9: the IVP-style path used to hide its failure mode behind a
+    `while i < 10` counter and re-raise whichever KeyError fired last.
+    """
+    # ---- Path 1: bifDiag-shaped (`.BR` + `.c['ICP']` on branch[0]) ----
+    class _Sub:
+        BR = 7
+        c = {'ICP': [4]}
+    bifdiag_shape = [_Sub()]
+    assert get_branch_info(bifdiag_shape) == (7, (4,))
+
+    # ICP given as a bare int collapses to a 1-tuple
+    class _Sub2:
+        BR = 3
+        c = {'ICP': 2}
+    assert get_branch_info([_Sub2()]) == (3, (2,))
+
+    # ---- Path 2: single-branch dict with 'BR' key and .c config ----
+    class _Single(dict):
+        c = {'ICP': [1, 2]}
+    single = _Single({'BR': 42})
+    assert get_branch_info(single) == (42, (1, 2))
+
+    # ---- Path 3: IVP-style — BR buried under an RG label on branch[0] ----
+    class _NoBR:
+        # No .BR attribute → path 1 fails. Path 2 also fails because this is
+        # not a dict-like container. Path 3 walks .labels.by_index.
+        c = {'ICP': [14]}
+        class labels:
+            by_index = {
+                # an EP-only label (no RG nested) — must be skipped, not give up
+                3: {'EP': {'solution': None}},
+                # the one with the RG nested data → path 3 picks it
+                7: {'RG': {'solution': {'data': {'BR': 11}}}},
+            }
+    assert get_branch_info([_NoBR()]) == (11, (14,))
+
+    # ---- Path 3 exhaustion: no key has an RG-nested BR ----
+    class _NoRG:
+        c = {'ICP': [4]}
+        class labels:
+            by_index = {1: {'EP': {}}, 2: {'LP': {}}}
+    with raises(KeyError, match=r"Tried 2 label indices: \[1, 2\]"):
+        get_branch_info([_NoRG()])
+
+    # ---- Totally unrecognised shape → AttributeError naming the type ----
+    with raises(AttributeError, match=r"cannot navigate int"):
+        get_branch_info(42)
 
 
 def test_1_7_parse_point_diagnostics_synthetic():

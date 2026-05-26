@@ -39,38 +39,72 @@ _EIG_LINE_RE = re.compile(
 _NO_CONVERGENCE = "NOTE:No converge"
 
 
-def get_branch_info(branch: Any) -> tuple:
-    """Extract the relevant data from a solution branch object.
+def _normalize_icp(branch_id: Any, icp: Any) -> tuple:
+    """Coerce auto-07p's ICP entry (int for a single-parameter continuation,
+    iterable for multi-parameter) to a tuple."""
+    icp = (icp,) if isinstance(icp, int) else tuple(icp)
+    return branch_id, icp
 
-    Parameters
-    ----------
-    branch
-        Solution branch as returned by `auto`.
+
+def get_branch_info(branch: Any) -> tuple:
+    """Extract the branch id and continuation parameter(s) from an auto-07p
+    solution branch object.
+
+    Three call shapes are supported, tried in order:
+
+      1. `bifDiag` (auto's top-level multi-branch container) — read `.BR` /
+         `.c['ICP']` from the first sub-branch.
+      2. A single branch object indexed by `'BR'` with its own `.c` config.
+      3. An IVP-style nested structure where the BR field is buried under an
+         `'RG'` (regular point) label on the first sub-branch. The previous
+         implementation walked the first 10 label indices and re-raised
+         whichever ``KeyError`` happened last; now we iterate the keys
+         explicitly and, on exhaustion, raise a single ``KeyError`` naming
+         every key that was tried.
 
     Returns
     -------
     tuple
-        Branch data, continuation parameter.
+        ``(branch_id, icp)`` where ``icp`` is a tuple of one or more PAR
+        indices.
     """
+    # --- Path 1: bifDiag with .BR / .c on the first sub-branch.
     try:
-        branch, icp = branch[0].BR, branch[0].c['ICP']
-    except (AttributeError, ValueError):
+        return _normalize_icp(branch[0].BR, branch[0].c['ICP'])
+    except (AttributeError, ValueError, KeyError, TypeError, IndexError):
+        pass
+
+    # --- Path 2: single branch object with 'BR' as a key.
+    try:
+        return _normalize_icp(branch['BR'], branch.c['ICP'])
+    except (AttributeError, KeyError, TypeError):
+        pass
+
+    # --- Path 3: IVP-style — find a labeled point on branch[0] whose nested
+    # ``RG`` solution carries the BR field, and read it from there.
+    try:
+        icp = branch[0].c['ICP']
+        labels = branch[0].labels.by_index
+    except (AttributeError, KeyError, TypeError, IndexError) as e:
+        raise AttributeError(
+            f"get_branch_info: cannot navigate {type(branch).__name__!s}; "
+            f"none of the supported branch shapes matched. Last error: {e}"
+        ) from e
+
+    tried = []
+    for sol_key, sol_entry in labels.items():
+        tried.append(sol_key)
         try:
-            branch, icp = branch['BR'], branch.c['ICP']
-        except AttributeError:
-            icp = branch[0].c['ICP']
-            i = 0
-            while i < 10:
-                try:
-                    sol_key = list(branch[0].labels.by_index.keys())[i]
-                    branch = branch[0].labels.by_index[sol_key]['RG']['solution']['data']['BR']
-                    break
-                except KeyError as e:
-                    i += 1
-                    if i == 10:
-                        raise e
-    icp = (icp,) if type(icp) is int else tuple(icp)
-    return branch, icp
+            br_id = sol_entry['RG']['solution']['data']['BR']
+        except (KeyError, TypeError):
+            continue
+        return _normalize_icp(br_id, icp)
+
+    raise KeyError(
+        f"get_branch_info: no labeled point on branch[0] carries an "
+        f"RG solution with a 'BR' field. Tried {len(tried)} label "
+        f"indices: {tried}."
+    )
 
 
 def get_solution_keys(branch: Any) -> List[str]:
