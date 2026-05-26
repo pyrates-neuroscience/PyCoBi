@@ -7,7 +7,7 @@ import re
 
 from pycobi import ODESystem
 from pyrates import clear
-from pytest import fixture, approx
+from pytest import fixture, approx, raises
 import numpy as np
 
 
@@ -95,6 +95,48 @@ def test_1_2_run(auto_dir):
     # qif_eq.f90 (no unames) → column 'U(1)'; ode2/ode3 are from_yaml → column 'r'.
     assert (ode1[0]["U(1)"] - ode2[0]["r"]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
     assert abs((ode2[0]["r"] - ode3[0]["r"]).sum()[0]) > 0
+
+
+def test_1_3_auto_constants(auto_dir, tmp_path):
+    """`auto_constants` exposes PyRates' multi-scenario c.* generation.
+
+    Two behaviours to pin:
+      1. Passing a tuple of scenario names produces one ``c.<name>`` file per
+         scenario, each preconfigured for that continuation mode.
+      2. Requesting ``init_cont=True`` without ``'ivp'`` in ``auto_constants``
+         is rejected up front rather than failing later with an opaque
+         "c.ivp not found" error from auto-07p.
+    """
+    model = "model_templates.neural_mass_models.qif.qif"
+
+    # Multi-scenario: ivp + eq + lc all emitted.
+    multi_dir = tmp_path / 'multi'
+    multi_dir.mkdir()
+    ode = ODESystem.from_yaml(
+        model,
+        working_dir=str(multi_dir), auto_dir=auto_dir,
+        file_name='qif_multi', func_name='qif_multi_fn',
+        init_cont=False,
+        auto_constants=('ivp', 'eq', 'lc'),
+    )
+    for scen in ('ivp', 'eq', 'lc'):
+        f = multi_dir / f'c.{scen}'
+        assert f.exists(), f"c.{scen} was not generated"
+    # Each c.* should be configured for its scenario (distinct IPS values).
+    assert 'IPS = -2' in (multi_dir / 'c.ivp').read_text()
+    assert 'IPS = 1' in (multi_dir / 'c.eq').read_text()
+    assert 'IPS = 2' in (multi_dir / 'c.lc').read_text()
+    ode.close_session(clear_files=True)
+
+    # Validation: init_cont=True without 'ivp' is rejected.
+    with raises(ValueError, match=r"init_cont=True .* 'ivp' is missing"):
+        ODESystem.from_yaml(
+            model,
+            working_dir=str(tmp_path / 'bad'), auto_dir=auto_dir,
+            file_name='qif_bad', func_name='qif_bad_fn',
+            init_cont=True,
+            auto_constants=('eq',),
+        )
 
 
 def test_2_1_jacobian_parity(auto_dir, tmp_path):

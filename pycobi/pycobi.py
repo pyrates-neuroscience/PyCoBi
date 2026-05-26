@@ -13,13 +13,26 @@ from .utility import get_solution_stability, get_solution_keys, get_branch_info,
     get_solution_params, get_solution_eigenvalues, get_lyapunov_exponents
 
 
+# auto-07p reserves PAR(11)..PAR(14) for internal use (period, time, etc.), so
+# user parameters must skip that slot range. Read the canonical value from
+# PyRates' FortranBackend (the layer that actually allocates PAR slots), with a
+# hard-coded fallback for older PyRates that doesn't expose it. Keeping a
+# single source of truth so PyCoBi's _var_map and PyRates' parnames stay in
+# lockstep.
+try:
+    from pyrates.backend.fortran.fortran_backend import FortranBackend as _FortranBackend
+    _AUTO_BLOCKED_PAR_RANGE = _FortranBackend._AUTO_BLOCKED_PAR_RANGE
+except (ImportError, AttributeError):
+    _AUTO_BLOCKED_PAR_RANGE = (10, 15)
+
+
 class ODESystem:
 
     __slots__ = ["auto_solutions", "results", "_orig_dir", "dir", "_auto", "_last_cont", "_cont_num", "_results_map",
                  "_branches", "_bifurcation_styles", "_temp", "additional_attributes", "_eq", "_var_map",
                  "_var_map_inv"]
 
-    blocked_indices = (10, 15)
+    blocked_indices = _AUTO_BLOCKED_PAR_RANGE
 
     def __init__(self, eq_file: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
                  params: list = None, state_vars: list = None, **kwargs) -> None:
@@ -130,7 +143,8 @@ class ODESystem:
 
     @classmethod
     def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
-                  init_kwargs: dict = None, analytical_jacobian: bool = True, **kwargs):
+                  init_kwargs: dict = None, analytical_jacobian: bool = True,
+                  auto_constants: Union[str, tuple, list] = ('ivp',), **kwargs):
         """Instantiates `ODESystem` from a YAML definition file.
 
         Parameters
@@ -154,6 +168,10 @@ class ODESystem:
             inside the generated `func` subroutine; the generated `c.*` file will set `JAC=1` so auto-07p uses the
             analytical Jacobian. Set to false to fall back to auto-07p's finite-difference Jacobian (useful when
             symbolic differentiation is slow or produces unwieldy expressions for the model at hand).
+        auto_constants
+            Name (or iterable of names) of auto-07p continuation scenarios to generate `c.<name>` files for. See
+            `from_template` for the recognised scenarios and their default constants. Defaults to `('ivp',)` for
+            backward compatibility.
         kwargs
             Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
             generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
@@ -166,11 +184,13 @@ class ODESystem:
 
         return cls.from_template(CircuitTemplate.from_yaml(path), working_dir=working_dir, auto_dir=auto_dir,
                                  init_cont=init_cont, init_kwargs=init_kwargs,
-                                 analytical_jacobian=analytical_jacobian, **kwargs)
+                                 analytical_jacobian=analytical_jacobian,
+                                 auto_constants=auto_constants, **kwargs)
 
     @classmethod
     def from_template(cls, template: CircuitTemplate, working_dir: str = None, auto_dir: str = None,
-                      init_cont: bool = True, init_kwargs: dict = None, analytical_jacobian: bool = True, **kwargs):
+                      init_cont: bool = True, init_kwargs: dict = None, analytical_jacobian: bool = True,
+                      auto_constants: Union[str, tuple, list] = ('ivp',), **kwargs):
         """Instantiates `ODESystem` from a `pyrates.CircuitTemplate`.
 
         Parameters
@@ -195,6 +215,20 @@ class ODESystem:
             analytical Jacobian. Set to false to fall back to auto-07p's finite-difference Jacobian (useful when
             symbolic differentiation is slow or produces unwieldy expressions for the model at hand). Can be
             overridden on a per-continuation basis by passing `JAC=0` or `JAC=1` to `ODESystem.run`.
+        auto_constants
+            Name (or iterable of names) of auto-07p continuation scenarios PyRates should emit `c.<name>` files for.
+            One file is written per requested scenario, each pre-configured with auto-07p constants appropriate for
+            that mode. Recognised scenarios:
+
+              * ``'ivp'`` — initial-value problem / time integration (``IPS=-2``). Required when ``init_cont=True``.
+              * ``'eq'``  — equilibrium continuation in one parameter (``IPS=1``).
+              * ``'lc'``  — limit-cycle continuation in one parameter, with PAR(11) as the period (``IPS=2``).
+              * ``'bvp'`` — boundary-value problem (``IPS=4``).
+
+            Pass e.g. ``auto_constants=('ivp', 'eq', 'lc')`` to set up all three at once and then switch scenarios on
+            a per-call basis via ``ode.run(c='eq', ...)``. Auto-07p constants passed as kwargs (``NMX``, ``DSMAX``,
+            ``UZSTOP``, ...) apply to every requested scenario; per-scenario overrides can be applied at run-time on
+            the corresponding ``ODESystem.run`` call. Defaults to ``('ivp',)`` for backward compatibility.
         kwargs
             Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
             generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
@@ -204,6 +238,17 @@ class ODESystem:
         ODESystem
             `ODESystem` instance.
         """
+
+        # normalise & validate auto_constants (before any I/O so an obviously
+        # inconsistent combo errors out cleanly rather than as a stale
+        # working-dir FileNotFoundError from chdir downstream).
+        scenarios = (auto_constants,) if isinstance(auto_constants, str) else tuple(auto_constants)
+        if init_cont and 'ivp' not in scenarios:
+            raise ValueError(
+                f"init_cont=True performs an IVP integration against c.ivp, but 'ivp' is missing from "
+                f"auto_constants={scenarios!r}. Either include 'ivp' (e.g. auto_constants=('ivp', 'eq')) or "
+                f"set init_cont=False."
+            )
 
         # change working directory
         if working_dir:
@@ -230,6 +275,7 @@ class ODESystem:
         prec = kwargs.pop("float_precision", "float64")
         _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name, backend="fortran",
                                                          float_precision=prec, auto=True, auto_jac=analytical_jacobian,
+                                                         auto_constants=scenarios,
                                                          vectorize=False, solver=solver, **kwargs)
 
         # PyRates returns the full positional argument list for the run function,
