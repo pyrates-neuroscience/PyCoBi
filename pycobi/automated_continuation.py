@@ -64,10 +64,14 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
 
 def codim2_search(params: list, starting_points: list, origin: Union[str, int, Any],
                   pyauto_instance: ODESystem, max_recursion_depth: int = 3, recursion: int = 0, periodic: bool = False,
-                  kwargs_2D_lc_cont: dict = None, kwargs_lc_cont: dict = None, kwargs_2D_cont: dict = None,
+                  kwargs_2D_lc_cont: dict = None, kwargs_2D_cont: dict = None,
                   precision=2, **kwargs) -> dict:
     """Performs automatic continuation of codim 1 bifurcation points in 2 parameters and searches for codimension 2
     bifurcations along the solution curves.
+
+    Currently only Zero-Hopf (ZH) points trigger recursive sub-searches — the GH
+    (generalised Hopf) and BT (Bogdanov-Takens) branches are not yet implemented;
+    those bifurcation types are detected and ignored rather than recursed on.
 
     Parameters
     ----------
@@ -79,7 +83,6 @@ def codim2_search(params: list, starting_points: list, origin: Union[str, int, A
     recursion
     periodic
     kwargs_2D_lc_cont
-    kwargs_lc_cont
     kwargs_2D_cont
     precision
     kwargs
@@ -89,7 +92,7 @@ def codim2_search(params: list, starting_points: list, origin: Union[str, int, A
 
     """
 
-    zhs, ghs, bts = dict(), dict(), dict()
+    zhs = dict()
     continuations = dict()
     name = kwargs.pop('name', f"{params[0]}/{params[1]}")
 
@@ -152,33 +155,8 @@ def codim2_search(params: list, starting_points: list, origin: Union[str, int, A
                                                        max_recursion_depth=max_recursion_depth, periodic=False,
                                                        name=name_tmp2, **kwargs))
 
-                elif "GH" in bf and (p not in ghs or not any([p_tmp[0] == param_pos[0] and p_tmp[1] == param_pos[1]
-                                                              for p_tmp in ghs[p]['pos']])):
-
-                    # if p not in ghs:
-                    #     ghs[p] = {'count': 1, 'pos': [param_pos]}
-                    # else:
-                    #     ghs[p]['count'] += 1
-                    #     ghs[p]['pos'].append(param_pos)
-                    #
-                    # # perform 1D continuation of limit cycle
-                    # kwargs_tmp = kwargs.copy()
-                    # kwargs_tmp.update({'ILP': 1, 'IPS': 2, 'ISW': -1, 'ISP': 2, 'ICP': [params[0], 11], 'NMX': 200})
-                    # if kwargs_lc_cont:
-                    #     kwargs_tmp.update(kwargs_lc_cont)
-                    # s_tmp, c_tmp = pyauto_instance.run(starting_point=f"GH{ghs[p]['count']}", origin=cont,
-                    #                                    STOP={'LP1'}, **kwargs_tmp)
-                    #
-                    # codim1_bifs = get_from_solutions(['bifurcation'], s_tmp)
-                    # if "LP" in codim1_bifs:
-                    #     continuations.update(codim2_search(params=params, starting_points=['LP1'], origin=c_tmp,
-                    #                                        pyauto_instance=pyauto_instance, recursion=recursion + 1,
-                    #                                        max_recursion_depth=max_recursion_depth, periodic=True,
-                    #                                        name=f"{name}:{p}/GH{ghs[p]['count']}", **kwargs))
-                    pass
-
-                elif "BT" in bf:
-
-                    pass
+                # GH (generalised Hopf) and BT (Bogdanov-Takens) recursion
+                # not yet implemented — those bifurcation types are detected
+                # by auto-07p but currently ignored here.
 
     return continuations

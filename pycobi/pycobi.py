@@ -154,10 +154,23 @@ class ODESystem:
             _ = self.run(ICP=[14], **kwargs)
 
     def __getitem__(self, item):
+        # Direct int-key lookup, then a named-continuation lookup via
+        # _results_map. On a double-miss, raise a single KeyError listing every
+        # name and int key currently registered — much friendlier than the
+        # opaque `KeyError: <item>` you'd get from the inner dict.
         try:
             return self.results[item]
         except KeyError:
+            pass
+        try:
             return self.results[self._results_map[item]]
+        except KeyError:
+            known_names = sorted(self._results_map.keys())
+            known_keys = sorted(self.results.keys())
+            raise KeyError(
+                f"{item!r} is neither a registered continuation name nor a stored "
+                f"pyauto key. Known names: {known_names}. Known keys: {known_keys}."
+            )
 
     @property
     def pyrates_template(self):
@@ -411,7 +424,21 @@ class ODESystem:
             Key of the solution branch that contains the solution `starting_point`, from which the new continuation will
             be started.
         starting_point
-            Key of the solution on the solution branch `origin`, from which the continuation procedure will be initiated.
+            Solution on the origin branch to start the new continuation from. Accepted forms:
+
+              * Auto-07p label string — ``'EP'``, ``'LP1'``, ``'HB2'`` etc. The first two characters
+                are the bifurcation type; the optional trailing integer disambiguates when the branch
+                carries several solutions of the same type (1-based, defaults to 1). The IVP that
+                `init_cont=True` runs produces ``'EP1'`` for the initial state and ``'EP2'`` for the
+                converged steady state — use ``'EP2'`` when starting an equilibrium continuation from
+                the IVP's terminal state.
+              * Bare bifurcation type (no number) — ``'EP'`` is equivalent to ``'EP1'``.
+              * Integer point index — a 1-based auto-07p point number on the branch (the ``PT``
+                column of the printed table). Useful when auto produced unlabeled regular points
+                that you want to continue from.
+              * ``None`` — only valid on the very first call against a fresh `ODESystem` (when
+                no prior continuation exists to extend); subsequent calls require an explicit
+                starting point so PyCoBi knows which branch to extend.
         variables
             Keys of the state variables that should be recorded for each continuation recording step.
         params
@@ -713,13 +740,19 @@ class ODESystem:
         cont
             Key of the solution branch.
         point
-            Key of the solution on the branch.
+            Key of the solution on the branch. When omitted (default), all rows of the
+            summary are returned; when provided, only the row at that label.
 
         Returns
         -------
         tuple
-            Tuple with 2 entries: (1) a DataFrame that contains the requested properties of the solution. (2) A map
-            between the passed parameter/variable keys and the column names in the DataFrame.
+            Tuple with 2 entries: (1) the requested slice of the continuation summary,
+            either a `DataFrame` (when `point` is None — multiple rows × `len(keys)` cols)
+            or a `Series` (when `point` is provided — a single labeled row indexed by
+            the requested keys); (2) a `dict` mapping each input key to the column name
+            that was actually used to look it up in the summary (these can differ when
+            PyCoBi's `_var_map_inv` translates `'PAR(i)'` / `'U(i)'` back to user-facing
+            names).
         """
         summary = self.get_summary(cont)
         columns = [k for k, _ in list(summary.keys())]

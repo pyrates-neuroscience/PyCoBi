@@ -282,6 +282,42 @@ class _MockSol:
         self.b = {'PT': pt} if pt is not None else {}
 
 
+def test_1_10_getitem_helpful_keyerror(auto_dir):
+    """`ODESystem.__getitem__` raises a KeyError that lists all registered
+    continuation names and stored pyauto keys when the requested item matches
+    neither. Pins C2: previously the error was the opaque inner KeyError(item)
+    raised by the dict, which was unhelpful when the user mistyped a name.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=False,
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        # Plant some bookkeeping by hand — no auto run needed for this test.
+        ode.results[0] = 'sentinel-zero'
+        ode.results[7] = 'sentinel-seven'
+        ode._results_map['hi'] = 0
+        ode._results_map['lo'] = 7
+
+        # Known lookups still work
+        assert ode[0] == 'sentinel-zero'
+        assert ode['hi'] == 'sentinel-zero'
+        assert ode['lo'] == 'sentinel-seven'
+
+        # Unknown lookup raises with both name + key lists in the message
+        with raises(KeyError, match=r"is neither a registered continuation name"):
+            ode['definitely_not_a_name']
+        with raises(KeyError, match=r"Known names: \['hi', 'lo'\]"):
+            ode['definitely_not_a_name']
+        with raises(KeyError, match=r"Known keys: \[0, 7\]"):
+            ode['definitely_not_a_name']
+    finally:
+        ode.close_session()
+
+
 def test_1_9_get_branch_info_paths():
     """`get_branch_info` accepts three call shapes (bifDiag, single-branch dict,
     IVP-style nested-RG container) and raises a meaningful error when none
