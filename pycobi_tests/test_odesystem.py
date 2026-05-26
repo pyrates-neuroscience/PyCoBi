@@ -139,6 +139,42 @@ def test_1_3_auto_constants(auto_dir, tmp_path):
         )
 
 
+def test_1_4_name_remapping(auto_dir):
+    """`_map_auto_kwargs` translates named PAR keys to integers in ICP, UZR,
+    UZSTOP, THL, and THU. Previously only ICP/UZR were remapped, so
+    UZSTOP={'eta': 5.0} silently passed through unchanged (which only happened
+    to work when auto-07p's parnames were active — the bug we hit on the
+    hand-written demo in test_3_1).
+    """
+    # Hand-written path: explicit params/state_vars build a name -> PAR index
+    # map. We can exercise `_map_auto_kwargs` directly without ever running
+    # auto, since init_cont=False short-circuits the IVP call.
+    # Anchor working_dir absolutely so preceding tests' cwd doesn't matter.
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=False,
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        remapped = ode._map_auto_kwargs({
+            'ICP': 'eta',
+            'UZR':    {'eta': [2.0], 'weight': [10.0]},
+            'UZSTOP': {'eta': 5.0,   'I_ext': 1.0},
+            'THL':    {'eta': 0.0},
+            'THU':    {'r': 0.5},
+        })
+    finally:
+        ode.close_session()
+
+    assert remapped['ICP'] == 4, f"expected ICP -> PAR(4), got {remapped['ICP']!r}"
+    assert remapped['UZR'] == {4: [2.0], 5: [10.0]}
+    assert remapped['UZSTOP'] == {4: 5.0, 3: 1.0}
+    assert remapped['THL'] == {4: 0.0}
+    assert remapped['THU'] == {1: 0.5}, "state-var name 'r' should map to U(1) -> 1"
+
+
 def test_2_1_jacobian_parity(auto_dir, tmp_path):
     """Equilibrium continuation should agree between PyRates' analytical Jacobian (JAC=1)
     and auto-07p's finite-difference Jacobian (JAC=0).

@@ -103,7 +103,24 @@ class ODESystem:
                                     }
         self._temp = kwargs.pop("template", None)
 
-        # create a map that links variable/parameter indices to string-based keys
+        # Build name <-> PAR/U index maps. Two paths feed into this code:
+        #
+        #   (1) Hand-written .f90 + c.* without parnames/unames. The user
+        #       passes `params=[...]`, `state_vars=[...]` so PyCoBi can
+        #       translate user-facing names ("eta", "r") to auto-07p's
+        #       internal "PAR(i)" / "U(i)" form for both inputs (ICP, UZR,
+        #       UZSTOP keys) and outputs (DataFrame column relabelling).
+        #
+        #   (2) PyRates-generated .f90 + c.* with parnames/unames. The user
+        #       passes namespaced names ("p/qif_op/eta") via `from_template`,
+        #       but auto-07p's solution exposes the bare local names ("eta")
+        #       through `solution.coordnames`. Since the namespaced and bare
+        #       names don't collide, every lookup misses and the input/output
+        #       strings pass through unchanged — auto-07p resolves them via
+        #       parnames/unames internally. `_var_map` is dead code on this
+        #       path but doesn't get in the way.
+        #
+        # PAR(14) is auto-07p's reserved time slot — always present.
         self._var_map = {"t": {"cont": 14, "plot": "PAR(14)"}}
         self._var_map_inv = {}
         if params:
@@ -117,9 +134,11 @@ class ODESystem:
                 self._var_map[key] = {"cont": idx, "plot": f"PAR({idx})"}
         if state_vars:
             for i, key in enumerate(state_vars):
-                self._var_map[key] = {"cont": i+1, "plot": f"U({i+1})"}
+                self._var_map[key] = {"cont": i + 1, "plot": f"U({i + 1})"}
+        # Only the "plot" string -> user-facing-name direction is ever read
+        # (by `_to_dataframe` and `extract`). The int -> name direction was
+        # historically populated too but had no callers; dropping it.
         for key, val in self._var_map.items():
-            self._var_map_inv[val["cont"]] = key
             self._var_map_inv[val["plot"]] = key
 
         # perform initial continuation in time to ensure convergence to steady-state solution
@@ -1158,10 +1177,14 @@ class ODESystem:
             else:
                 kwargs["ICP"] = val
 
-        # handle the user-point parameter
-        if "UZR" in kwargs:
-            uzr_dict = kwargs.pop("UZR")
-            kwargs["UZR"] = {self._map_var(key) if type(key) is str else key: val for key, val in uzr_dict.items()}
+        # handle PAR-keyed dict constants (named -> integer index). On the
+        # PyRates-generated path auto-07p resolves names itself via parnames,
+        # so unmapped strings pass through harmlessly; on the hand-written
+        # path the explicit translation here is what makes string keys work.
+        for key in ("UZR", "UZSTOP", "THL", "THU"):
+            if key in kwargs:
+                d = kwargs.pop(key)
+                kwargs[key] = {self._map_var(k) if type(k) is str else k: v for k, v in d.items()}
 
         return kwargs
 
