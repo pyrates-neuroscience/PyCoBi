@@ -232,9 +232,18 @@ class ODESystem:
                                                          float_precision=prec, auto=True, auto_jac=analytical_jacobian,
                                                          vectorize=False, solver=solver, **kwargs)
 
+        # PyRates returns the full positional argument list for the run function,
+        # which prepends some non-parameter args (state vector ``y``, derivative
+        # ``dy``, time ``t``, optional history function ``hist`` for DDEs) before
+        # the actual model parameters. Filter by name rather than slicing by
+        # position — survives DDE models (where ``hist`` shifts the offset) and
+        # is robust to upstream signature reordering.
+        non_param_args = {'t', 'y', 'dy', 'hist'}
+        param_names = tuple(p for p in params if p not in non_param_args)
+
         # initialize ODESystem
         return cls(auto_dir=auto_dir, init_cont=init_cont, c="ivp", eq_file=file_name, template=template,
-                   params=params[3:], state_vars=list(state_vars), **init_kwargs)
+                   params=param_names, state_vars=list(state_vars), **init_kwargs)
 
     @classmethod
     def from_file(cls, filename: str, auto_dir: str = None):
@@ -609,7 +618,7 @@ class ODESystem:
             Tuple with 2 entries: (1) a DataFrame that contains the requested properties of the solution. (2) A map
             between the passed parameter/variable keys and the column names in the DataFrame.
         """
-        summary = self.get_summary(cont, point=point)
+        summary = self.get_summary(cont)
         columns = [k for k, _ in list(summary.keys())]
         keys_new = [key if key in columns else self._var_map_inv[key] for key in keys]
         key_map = {key_old: key_new for key_old, key_new in zip(keys, keys_new)}
@@ -848,10 +857,10 @@ class ODESystem:
         if not linespecs:
             linespecs = [dict() for _ in range(len(points))]
         for i in range(len(points)):
-            time = results[i]['time']
+            time = results[i]['time'].squeeze()
             kwargs_tmp = kwargs.copy()
             kwargs_tmp.update(linespecs[i])
-            line_col = self._get_line_collection(x=time, y=results[i][var], **kwargs_tmp)
+            line_col = self._get_line_collection(x=time, y=results[i][var].squeeze(), **kwargs_tmp)
             ax.add_collection(line_col)
         ax.autoscale()
         ax.legend(points)
