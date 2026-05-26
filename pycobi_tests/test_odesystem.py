@@ -193,6 +193,19 @@ def test_1_4_name_remapping(auto_dir):
             'THL':    {'eta': 0.0},
             'THU':    {'r': 0.5},
         })
+
+        # Pin `_map_var` itself: both 'cont' (int) and 'plot' ("PAR(i)"/"U(i)")
+        # modes must agree on the index, and the (kind, idx) tuple structure
+        # in `_var_map` is what determines whether 'plot' returns PAR or U.
+        assert ode._map_var('eta', 'cont') == 4
+        assert ode._map_var('eta', 'plot') == 'PAR(4)'
+        assert ode._map_var('r', 'cont') == 1
+        assert ode._map_var('r', 'plot') == 'U(1)'
+        assert ode._map_var('t', 'cont') == 14
+        assert ode._map_var('t', 'plot') == 'PAR(14)'
+        # Unknown names pass through unchanged in both modes.
+        assert ode._map_var('not_a_var', 'cont') == 'not_a_var'
+        assert ode._map_var('PAR(99)', 'plot') == 'PAR(99)'
     finally:
         ode.close_session()
 

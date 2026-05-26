@@ -124,8 +124,12 @@ class ODESystem:
         #       parnames/unames internally. `_var_map` is dead code on this
         #       path but doesn't get in the way.
         #
-        # PAR(14) is auto-07p's reserved time slot — always present.
-        self._var_map = {"t": {"cont": 14, "plot": "PAR(14)"}}
+        # Per-entry storage is a (kind, idx) tuple — kind 'P' for parameters
+        # (mapped to "PAR(idx)") or 'U' for state variables (mapped to
+        # "U(idx)"). The "plot" string form is derived on demand by `_map_var`
+        # rather than stored alongside the int. PAR(14) is auto-07p's reserved
+        # time slot, always present.
+        self._var_map = {"t": ("P", 14)}
         self._var_map_inv = {}
         if params:
             increment = 1
@@ -135,15 +139,15 @@ class ODESystem:
                     idx -= increment
                     increment += self.blocked_indices[1] - self.blocked_indices[0]
                     idx += increment
-                self._var_map[key] = {"cont": idx, "plot": f"PAR({idx})"}
+                self._var_map[key] = ("P", idx)
         if state_vars:
             for i, key in enumerate(state_vars):
-                self._var_map[key] = {"cont": i + 1, "plot": f"U({i + 1})"}
+                self._var_map[key] = ("U", i + 1)
         # Only the "plot" string -> user-facing-name direction is ever read
-        # (by `_to_dataframe` and `extract`). The int -> name direction was
-        # historically populated too but had no callers; dropping it.
-        for key, val in self._var_map.items():
-            self._var_map_inv[val["plot"]] = key
+        # (by `_to_dataframe` and `extract`). Derive each plot string from the
+        # (kind, idx) tuple — `_map_var(name, "plot")` produces the same form.
+        for name in self._var_map:
+            self._var_map_inv[self._map_var(name, "plot")] = name
 
         # perform initial continuation in time to ensure convergence to steady-state solution
         if init_cont:
@@ -1227,11 +1231,24 @@ class ODESystem:
 
         return kwargs
 
-    def _map_var(self, var: str, mode: str = "cont") -> str:
-        try:
-            return self._var_map[var][mode]
-        except KeyError:
+    def _map_var(self, var: str, mode: str = "cont"):
+        """Translate a user-facing var name to auto-07p's internal form.
+
+        With ``mode="cont"`` returns the integer index (PAR slot for
+        parameters, U slot for state variables) for use in ICP / UZR / UZSTOP
+        / THL / THU. With ``mode="plot"`` returns the ``"PAR(i)"`` or
+        ``"U(i)"`` string used as a DataFrame column key. Unknown names pass
+        through unchanged so non-PyCoBi-managed keys (raw ``PAR(i)`` strings,
+        bare ints, etc.) still work.
+        """
+        entry = self._var_map.get(var)
+        if entry is None:
             return var
+        kind, idx = entry
+        if mode == "cont":
+            return idx
+        # "plot" mode (the only other mode currently used)
+        return f"PAR({idx})" if kind == "P" else f"U({idx})"
 
     def _to_dataframe(self, data: list, columns: Union[list, tuple], index: list) -> DataFrame:
 
