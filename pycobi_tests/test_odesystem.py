@@ -2,6 +2,7 @@
 """
 
 # imports
+import os
 import re
 
 from pycobi import ODESystem
@@ -179,4 +180,108 @@ def test_2_1_jacobian_parity(auto_dir, tmp_path):
     assert np.allclose(r_jac_i, r_fd_i, atol=1e-3, rtol=1e-3), (
         f"analytical vs FD Jacobian continuations diverge:\n"
         f"  eta_grid = {eta_grid}\n  r_jac    = {r_jac_i}\n  r_fd     = {r_fd_i}"
+    )
+
+
+def test_3_1_pycobi_vs_auto_ops(auto_dir, tmp_path):
+    """End-to-end parity vs auto-07p's own analytical-Jacobian demo.
+
+    auto-07p ships the `ops` demo (a FitzHugh-Nagumo-like 3D ODE used in
+    "optimization of periodic solutions") with a hand-derived DFDU/DFDP
+    and JAC=1. We run PyCoBi over the demo's native Fortran source as
+    the reference, then build the same model from a PyRates YAML and run
+    the same equilibrium continuation in PAR(3) ('p3').
+
+    The two paths agreeing means: (1) PyRates' symbolic DFDU/DFDP entries
+    match the hand-derived ones; (2) PyCoBi's PyRates-driven setup yields
+    the same auto-07p output as a raw demo run.
+
+    We chose `ops` over the slightly simpler `abcb` because abcb's RHS
+    uses `exp(x3)` and PyRates' equation parser currently leaves `exp`
+    as an undefined function — `sympy.diff` then returns an unevaluated
+    `Derivative(exp(x3), x3)` that gfortran refuses to compile.
+    """
+    import shutil
+
+    demo_src = os.path.join(auto_dir, 'demos', 'ops')
+
+    # ---- reference: auto-07p's native ops demo, driven through PyCoBi ----
+    demo_dir = tmp_path / 'demo'
+    demo_dir.mkdir()
+    for fn in ('ops.f90', 'c.ops'):
+        shutil.copy(os.path.join(demo_src, fn), demo_dir)
+    ode_demo = ODESystem(
+        eq_file='ops', working_dir=str(demo_dir),
+        auto_dir=auto_dir, init_cont=False,
+    )
+    # `parnames={}, unames={}` clears auto-07p's runner cache: by design (see
+    # auto/runAUTO.py config()) auto retains parnames/unames across run() calls
+    # within a process and merges them with new c.* files. Without this, any
+    # prior test that used a PyRates-generated model with unames/parnames would
+    # leak its column names into ode_demo's DataFrame.
+    sols_demo, _ = ode_demo.run(c='ops', name='ops_demo', parnames={}, unames={})
+    ode_demo.close_session()
+
+    # ---- mirror: same model through PyCoBi/PyRates with the analytical Jac ----
+    yaml_dir = tmp_path / 'yaml'
+    yaml_dir.mkdir()
+    # PyRates' slash-notation path: <dir>/<filename-no-ext>/<template-name>.
+    # Anchor on this test file's directory rather than cwd — preceding tests
+    # leave cwd inside their own tmp_path via ODESystem._orig_dir handling.
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    yaml_template = os.path.join(test_dir, 'resources', 'ops', 'ops')
+    ode_yaml = ODESystem.from_yaml(
+        yaml_template,
+        working_dir=str(yaml_dir), auto_dir=auto_dir,
+        file_name='ops_mod', func_name='ops_fn',
+        init_cont=False, analytical_jacobian=True,
+        auto_constants=('eq',),
+        # mirror the demo's c.ops auto-07p constants:
+        NTST=15, NCOL=4, ISP=1, ILP=1, MXBF=10,
+        NMX=25, NPR=500, IID=2, ITMX=8, ITNW=5, NWTN=3,
+        EPSL=1e-7, EPSU=1e-7, EPSS=1e-4,
+        DS=0.01, DSMIN=1e-3, DSMAX=0.5, IADS=1,
+        # Stop when p3 reaches 0.95; the demo uses UZSTOP={3: 0.95} (literal
+        # PAR(3)) because it doesn't declare parnames, but PyRates writes
+        # `parnames` into c.eq and may not preserve the YAML's parameter order
+        # (e.g. p3 ends up at PAR(4) for this model). Use the named form so
+        # auto-07p resolves p3 via parnames regardless of its PAR index.
+        UZSTOP={'p3': 0.95},
+    )
+    sols_yaml, _ = ode_yaml.run(c='eq', ICP='p3', name='ops_yaml')
+
+    # ---- the analytical Jacobian path actually fired ----
+    # (read these BEFORE close_session(clear_files=True) wipes the build dir)
+    f90 = (yaml_dir / 'ops_mod.f90').read_text()
+    ceq = (yaml_dir / 'c.eq').read_text()
+    assert _DFDU_ASSIGN.search(f90)
+    assert _DFDP_ASSIGN.search(f90)
+    assert 'JAC = 1' in ceq
+
+    ode_yaml.close_session(clear_files=True)
+
+    # ---- numerical parity ----
+    # demo uses default auto-07p names (U(1), PAR(3)); PyRates emits the user
+    # names via unames/parnames (x1, p3).
+    p3_demo = np.asarray(sols_demo['PAR(3)'].values).squeeze()
+    x1_demo = np.asarray(sols_demo['U(1)'].values).squeeze()
+    p3_yaml = np.asarray(sols_yaml['p3'].values).squeeze()
+    x1_yaml = np.asarray(sols_yaml['x1'].values).squeeze()
+
+    order = np.argsort(p3_demo)
+    p3_demo, x1_demo = p3_demo[order], x1_demo[order]
+    order = np.argsort(p3_yaml)
+    p3_yaml, x1_yaml = p3_yaml[order], x1_yaml[order]
+
+    lo = max(p3_demo.min(), p3_yaml.min())
+    hi = min(p3_demo.max(), p3_yaml.max())
+    assert hi - lo > 0.02, (
+        f"insufficient overlap between PyCoBi/auto curves: p3 in [{lo}, {hi}]"
+    )
+    grid = np.linspace(lo, hi, 20)
+    x1_demo_i = np.interp(grid, p3_demo, x1_demo)
+    x1_yaml_i = np.interp(grid, p3_yaml, x1_yaml)
+    assert np.allclose(x1_demo_i, x1_yaml_i, atol=1e-4, rtol=1e-4), (
+        f"PyCoBi/PyRates ops curve diverges from auto-07p demo:\n"
+        f"  p3_grid    = {grid}\n  x1_demo    = {x1_demo_i}\n  x1_yaml    = {x1_yaml_i}"
     )
