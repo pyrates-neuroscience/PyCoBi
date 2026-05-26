@@ -5,6 +5,7 @@
 import os
 import re
 
+import pytest
 from pycobi import ODESystem
 from pyrates import clear
 from pytest import fixture, approx, raises
@@ -15,6 +16,27 @@ import numpy as np
 # does NOT match the array declaration ``dfdu(ndim,ndim)`` in the func signature.
 _DFDU_ASSIGN = re.compile(r'\bdfdu\(\s*\d', re.IGNORECASE)
 _DFDP_ASSIGN = re.compile(r'\bdfdp\(\s*\d', re.IGNORECASE)
+
+
+def _pyrates_has_auto_jac() -> bool:
+    """True iff the installed PyRates writes the analytical Jacobian (DFDU/DFDP)
+    into the auto-07p ``func`` wrapper and `unames` / `parnames` / multi-scenario
+    `auto_constants` into c.* — i.e. PyRates >= 1.1. PyPI 1.0.x silently
+    ignores `auto_jac`, `auto_constants`, etc., so feature-dependent tests
+    must skip rather than fail there.
+    """
+    try:
+        from pyrates.backend.fortran.fortran_backend import FortranBackend
+    except ImportError:
+        return False
+    return hasattr(FortranBackend, '_emit_auto_jacobian_block')
+
+
+_requires_pyrates_dev = pytest.mark.skipif(
+    not _pyrates_has_auto_jac(),
+    reason="requires PyRates >= 1.1 (analytical-Jacobian emission, unames/parnames, "
+           "multi-scenario auto_constants); skipped against older PyPI releases",
+)
 
 # meta infos
 __author__ = "Richard Gast"
@@ -90,13 +112,18 @@ def test_1_2_run(auto_dir):
 
     print(ode2[0].columns.values)
 
-    # PyRates >= 1.1 emits `unames` into c.* so auto exposes state variables under
-    # their bare local name ('r') rather than 'U(1)'. ode1 uses the hand-written
-    # qif_eq.f90 (no unames) → column 'U(1)'; ode2/ode3 are from_yaml → column 'r'.
-    assert (ode1[0]["U(1)"] - ode2[0]["r"]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
-    assert abs((ode2[0]["r"] - ode3[0]["r"]).sum()[0]) > 0
+    # The column name for the first state variable depends on which PyRates is
+    # installed: PyRates >= 1.1 writes `unames = {1: 'r', ...}` into the c.*
+    # file so auto's DataFrame columns are bare local names ('r'); older
+    # PyRates (PyPI 1.0.x) doesn't, and PyCoBi falls back to the namespaced
+    # name via `_var_map_inv` ('p/qif_op/r'). Either name should match ode1's
+    # 'U(1)' column from the hand-written qif_eq.f90.
+    r_col = 'r' if 'r' in ode2[0].columns else 'p/qif_op/r'
+    assert (ode1[0]["U(1)"] - ode2[0][r_col]).sum()[0] == approx(0.0, rel=accuracy, abs=accuracy)
+    assert abs((ode2[0][r_col] - ode3[0][r_col]).sum()[0]) > 0
 
 
+@_requires_pyrates_dev
 def test_1_3_auto_constants(auto_dir, tmp_path):
     """`auto_constants` exposes PyRates' multi-scenario c.* generation.
 
@@ -175,6 +202,7 @@ def test_1_4_name_remapping(auto_dir):
     assert remapped['THU'] == {1: 0.5}, "state-var name 'r' should map to U(1) -> 1"
 
 
+@_requires_pyrates_dev
 def test_2_1_jacobian_parity(auto_dir, tmp_path):
     """Equilibrium continuation should agree between PyRates' analytical Jacobian (JAC=1)
     and auto-07p's finite-difference Jacobian (JAC=0).
@@ -261,6 +289,7 @@ def test_2_1_jacobian_parity(auto_dir, tmp_path):
     )
 
 
+@_requires_pyrates_dev
 def test_3_1_pycobi_vs_auto_ops(auto_dir, tmp_path):
     """End-to-end parity vs auto-07p's own analytical-Jacobian demo.
 
