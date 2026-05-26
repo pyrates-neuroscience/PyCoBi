@@ -6,7 +6,7 @@ import os
 import re
 
 import pytest
-from pycobi import ODESystem, parse_point_diagnostics
+from pycobi import ODESystem, Continuation, parse_point_diagnostics
 from pycobi.utility import get_branch_info
 from pyrates import clear
 from pytest import fixture, approx, raises
@@ -460,6 +460,78 @@ def test_1_7_parse_point_diagnostics_synthetic():
     assert len(res['eigenvalues']) == 2
     assert res['eigenvalues'][0] == complex(-2.12891, 0.0)
     assert res['eigenvalues'][1] == complex(-1.0, 0.0)
+
+
+def test_1_11_continuation_dataclass(auto_dir, tmp_path):
+    """`get_continuation` returns a `Continuation` dataclass whose fields stay
+    in lockstep with the legacy mirror dicts (auto_solutions / results /
+    _results_map / _branches). Also covers the bidirectional path: forward +
+    reverse share a single Continuation, and from_file rebuilds the dataclass
+    from the mirrors on load.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        # init_cont=True ran an IVP — there's already one continuation at key 0,
+        # unnamed (init_cont doesn't pass a name).
+        assert 0 in ode.continuations
+        c0 = ode.get_continuation(0)
+        assert isinstance(c0, Continuation)
+        assert c0.key == 0 and c0.name is None
+        assert c0.summary is ode.results[0]
+        assert c0.auto_solution is ode.auto_solutions[0]
+
+        # Run a bidirectional eta continuation; forward + reverse share a
+        # single Continuation registered under the user's name.
+        sols, _ = ode.run(
+            starting_point='EP2', name='eta_bd', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=30, NPR=500,
+            bidirectional=True, DS=0.05, DSMAX=0.5,
+        )
+        assert sorted(ode.continuations.keys()) == [0, 1]
+        # Name lookup goes through _results_map and returns the same instance
+        # as the key lookup.
+        c_by_name = ode.get_continuation('eta_bd')
+        c_by_key = ode.get_continuation(1)
+        assert c_by_name is c_by_key
+        assert c_by_name.name == 'eta_bd'
+        assert c_by_name.summary is sols
+        # icps records the continuation parameter (PAR(4) = eta). The forward
+        # half registers it once; the reverse half's _register_continuation
+        # call dedupes it on the Continuation (but the legacy `_branches`
+        # mirror keeps duplicates because the merge-detection condition in
+        # `run()` requires `new_icp in self._branches[new_branch][origin]`).
+        assert c_by_name.icps == [(4,)]
+        assert c_by_name.branch_id == 1  # auto starts BR at 1
+
+        # Mismatched lookups raise with helpful messages
+        with raises(KeyError, match=r"No continuation named 'nope'"):
+            ode.get_continuation('nope')
+        with raises(KeyError, match=r"No continuation with key 999"):
+            ode.get_continuation(999)
+
+        # to_file / from_file round-trip: the canonical store is rebuilt from
+        # the mirrors on load (auto_solution is excluded from the pickle and
+        # comes back as None).
+        out = tmp_path / 'ode_with_continuations.pkl'
+        ode.to_file(str(out), results_only=False)
+        loaded = ODESystem.from_file(str(out), auto_dir=auto_dir)
+        assert sorted(loaded.continuations.keys()) == [0, 1]
+        l_by_name = loaded.get_continuation('eta_bd')
+        assert l_by_name.name == 'eta_bd'
+        assert l_by_name.branch_id == 1
+        assert l_by_name.icps == [(4,)]
+        assert l_by_name.summary is not None  # summary survived the round-trip
+        assert l_by_name.auto_solution is None  # bifDiag excluded from pickle
+        loaded.close_session()
+    finally:
+        ode.close_session()
 
 
 def test_1_6_bidirectional_no_magic_name(auto_dir):

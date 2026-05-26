@@ -1,6 +1,7 @@
 import os
 import pickle
 import warnings
+from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,10 +10,47 @@ from mpl_toolkits.mplot3d import Axes3D
 from pyrates import CircuitTemplate, clear
 from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, List
 
 from .utility import get_solution_keys, get_branch_info, get_solution_variables, \
     get_solution_params, get_lyapunov_exponents, parse_point_diagnostics
+
+
+@dataclass
+class Continuation:
+    """One continuation tracked by `ODESystem` — bundles together what was
+    previously scattered across the `auto_solutions`, `results`, `_results_map`,
+    and `_branches` dicts.
+
+    Fields
+    ------
+    key
+        The pycobi key (an int) under which this continuation is stored.
+    name
+        User-supplied name passed to `run(..., name=...)`, or `None`.
+    branch_id
+        auto-07p's BR identifier for the branch this continuation lives on.
+        Multiple continuations may share a branch_id (e.g. when one extends
+        another or when bidirectional merges into the same branch).
+    icps
+        Continuation parameter index tuples used to grow this branch. A
+        bidirectional run that goes both ways in PAR(4) records `[(4,)]`
+        once; a branch that was extended a second time in PAR(5) appends
+        `(5,)`.
+    auto_solution
+        The auto-07p ``bifDiag`` object holding the actual solution data.
+        Not pickle-safe — excluded from `to_file`; on `from_file` this
+        will be `None` for loaded instances.
+    summary
+        PyCoBi's parsed `DataFrame` summary of the continuation. Populated
+        by `_create_summary` after `auto.run` returns.
+    """
+    key: int
+    name: Optional[str]
+    branch_id: int
+    icps: List[tuple] = field(default_factory=list)
+    auto_solution: Any = None
+    summary: Optional[DataFrame] = None
 
 
 # auto-07p reserves PAR(11)..PAR(14) for internal use (period, time, etc.), so
@@ -32,7 +70,7 @@ class ODESystem:
 
     __slots__ = ["auto_solutions", "results", "_orig_dir", "dir", "_auto", "_last_cont", "_cont_num", "_results_map",
                  "_branches", "_bifurcation_styles", "_temp", "additional_attributes", "_eq", "_var_map",
-                 "_var_map_inv"]
+                 "_var_map_inv", "continuations"]
 
     blocked_indices = _AUTO_BLOCKED_PAR_RANGE
 
@@ -82,6 +120,12 @@ class ODESystem:
         # open attributes
         self.auto_solutions = {}
         self.results = {}
+        # `continuations` is the canonical store; `auto_solutions`, `results`,
+        # `_results_map`, and `_branches` are kept as mirrors of its fields for
+        # backward compatibility with external code that reads them directly.
+        # Mirrors are populated by `_register_continuation` / `_record_summary`;
+        # direct mirror writes by external code don't propagate back here.
+        self.continuations = {}
         self._orig_dir = os.getcwd()
         if working_dir:
             try:
@@ -357,6 +401,9 @@ class ODESystem:
                 attr.update(val)
             else:
                 setattr(pyauto_instance, key, val)
+        # `continuations` is in _PICKLE_EXCLUDE — rebuild it from the mirror
+        # dicts we just restored so `get_continuation(...)` works after load.
+        pyauto_instance._rebuild_continuations_from_mirrors()
         return pyauto_instance
 
     # Slots that to_file deliberately omits. ``dir`` / ``_orig_dir`` are
@@ -367,12 +414,14 @@ class ODESystem:
     # don't pickle; users that want the template on disk should pickle it
     # separately or save the YAML path alongside. ``auto_solutions`` contains
     # auto-07p bifDiag objects that hold open BufferedReader handles on the
-    # fort.* files and refuse to pickle. ``_last_cont`` is normally an int but
-    # `merge()` rebinds it to a solution object — same problem; skip it and
-    # rely on _cont_num to track the count.
+    # fort.* files and refuse to pickle. ``continuations`` mirrors hold the
+    # same bifDiag objects on their `.auto_solution` field — also unpicklable;
+    # rebuilt by `_rebuild_continuations_from_mirrors` on load. ``_last_cont``
+    # is normally an int but `merge()` rebinds it to a solution object — same
+    # problem; skip it and rely on `_cont_num` to track the count.
     _PICKLE_EXCLUDE = frozenset({
         "dir", "_orig_dir", "_auto", "_temp",
-        "auto_solutions", "_last_cont",
+        "auto_solutions", "_last_cont", "continuations",
     })
 
     def to_file(self, filename: str, results_only: bool = True, **kwargs) -> None:
@@ -526,45 +575,34 @@ class ODESystem:
         # store solution and extracted information in pycobi
         ####################################################
 
-        # merge auto solutions if necessary and create key for auto solution
+        # Decide whether this continuation extends an existing branch (merge
+        # path) or starts a fresh one. Three cases:
+        #   1. Same (branch, origin, icp) tuple seen before — auto extended
+        #      the existing branch; merge into the previous result.
+        #   2. The reverse-direction half of a bidirectional run — merge into
+        #      the forward branch identified by `_last_cont`.
+        #   3. Otherwise — allocate a fresh pyauto key.
         if new_branch in self._branches and origin in self._branches[new_branch] \
                 and new_icp in self._branches[new_branch][origin]:
-
-            # get key from old solution and merge with new solution
             solution_old, *_ = self.get_solution(origin)
             pyauto_key = solution_old.pycobi_key
             solution, new_points = self.merge(pyauto_key, solution, new_icp)
-
         elif _reverse_direction and 'DS' in auto_kwargs and auto_kwargs['DS'] == '-':
-
-            # reverse half of a bidirectional run: merge into the forward branch
             solution_old = self.auto_solutions[self._last_cont]
             pyauto_key = solution_old.pycobi_key
             solution, new_points = self.merge(pyauto_key, solution, new_icp)
-
         else:
-
-            # create pycobi key for solution
             pyauto_key = self._cont_num + 1 if self._cont_num in self.auto_solutions else self._cont_num
             solution.pycobi_key = pyauto_key
 
-        # set up dictionary fields in _branches for new solution
-        if new_branch not in self._branches:
-            self._branches[new_branch] = {pyauto_key: []}
-        elif pyauto_key not in self._branches[new_branch]:
-            self._branches[new_branch][pyauto_key] = []
-
-        # store auto solution under unique pycobi cont
-        self.auto_solutions[pyauto_key] = solution
-        self._last_cont = pyauto_key
-        self._branches[new_branch][pyauto_key].append(new_icp)
-
-        # store key of continuation results (the reverse-direction half of a
-        # bidirectional run doesn't register a fresh name — it merges into the
-        # forward branch which is already in _results_map under the user's name)
-        self._cont_num = len(self.auto_solutions)
-        if name and not _reverse_direction:
-            self._results_map[name] = pyauto_key
+        # The reverse-direction half of a bidirectional run doesn't register
+        # a fresh name — it merges into the forward branch which is already
+        # in _results_map under the user's name.
+        registered_name = name if (name and not _reverse_direction) else None
+        self._register_continuation(
+            key=pyauto_key, name=registered_name, branch_id=new_branch,
+            icp=new_icp, auto_solution=solution,
+        )
 
         # if continuation should be bidirectional, call this method again with reversed continuation direction
         ######################################################################################################
@@ -589,7 +627,7 @@ class ODESystem:
                                            params=params, timeseries=get_timeseries, stability=get_stability,
                                            period=get_period, eigenvals=get_eigenvals, lyapunov_exp=get_lyapunov_exp,
                                            reduce_limit_cycle=reduce_limit_cycle)
-            self.results[pyauto_key] = summary
+            self._record_summary(pyauto_key, summary)
 
         return self.results[pyauto_key], solution
 
@@ -607,21 +645,145 @@ class ODESystem:
             Continuation parameter that was used in both continuations that are to be merged.
         """
 
-        # merge solutions
-        #################
-
         # call merge in auto
         solution = self._auto.merge(self.auto_solutions[key] + cont)
         solution.pycobi_key = key
 
-        # store solution in pycobi
+        # mirror updates (idempotent — `run()` re-syncs through
+        # `_register_continuation`, but keeping them here lets external
+        # callers use `merge` without the surrounding bookkeeping)
         self.auto_solutions[key] = solution
-        self._last_cont = solution
+        self._last_cont = key
+
+        # also reflect the merged solution on the canonical Continuation
+        # if one is registered for this key
+        if key in self.continuations:
+            self.continuations[key].auto_solution = solution
 
         # extract solution points
         points = list(solution.data[0].labels.by_index.keys())
 
         return solution, points
+
+    # ------------------------------------------------------------------
+    # Centralised continuation bookkeeping (replaces the scattered writes
+    # to auto_solutions / results / _results_map / _branches that used to
+    # live inline in `run`).
+    # ------------------------------------------------------------------
+
+    def _register_continuation(self, key: int, name: Optional[str], branch_id: int,
+                               icp: tuple, auto_solution: Any) -> "Continuation":
+        """Add a new `Continuation` or update an existing one, syncing all
+        four legacy mirror dicts in the process.
+
+        Idempotent on `key`: when the entry already exists (typical merge /
+        bidirectional-reverse path) the auto_solution is replaced, the icp
+        appended to both the dataclass and the `_branches` mirror, and any
+        non-None `name` is set if not already present.
+        """
+        existing = self.continuations.get(key)
+        if existing is None:
+            cont = Continuation(
+                key=key, name=name, branch_id=branch_id,
+                icps=[icp], auto_solution=auto_solution, summary=None,
+            )
+            self.continuations[key] = cont
+        else:
+            cont = existing
+            cont.auto_solution = auto_solution
+            if icp not in cont.icps:
+                cont.icps.append(icp)
+            if name and not cont.name:
+                cont.name = name
+
+        # ---- mirror sync ----
+        self.auto_solutions[key] = auto_solution
+        self._last_cont = key
+        if name:
+            self._results_map[name] = key
+        # `_branches` carries an icp list per (branch_id, key) — kept
+        # append-only (with duplicates allowed) so the merge-detection
+        # condition in `run()` keeps matching exactly as before.
+        if branch_id not in self._branches:
+            self._branches[branch_id] = {key: []}
+        elif key not in self._branches[branch_id]:
+            self._branches[branch_id][key] = []
+        self._branches[branch_id][key].append(icp)
+        self._cont_num = len(self.auto_solutions)
+        return cont
+
+    def _record_summary(self, key: int, summary: DataFrame) -> None:
+        """Attach a parsed summary DataFrame to a Continuation and its
+        `results` mirror."""
+        if key in self.continuations:
+            self.continuations[key].summary = summary
+        self.results[key] = summary
+
+    def _rebuild_continuations_from_mirrors(self) -> None:
+        """Reconstruct `self.continuations` from the legacy mirror dicts.
+        Called by `from_file` after the mirrors have been restored from
+        disk — `continuations` is in `_PICKLE_EXCLUDE` (because each entry
+        carries an unpicklable auto_solution), so it has to be rebuilt.
+        Loaded continuations have `auto_solution=None`; callers wanting
+        to drive auto from a loaded instance need to re-run the model.
+        """
+        self.continuations.clear()
+        key_to_name = {key: name for name, key in self._results_map.items()}
+        key_to_branch: dict = {}
+        key_to_icps: dict = {}
+        for branch_id, by_key in self._branches.items():
+            for key, icps in by_key.items():
+                key_to_branch[key] = branch_id
+                key_to_icps.setdefault(key, []).extend(icps)
+
+        all_keys = set(self.results) | set(self.auto_solutions) | set(key_to_branch)
+        for key in all_keys:
+            # Dedupe icps — `_branches[branch_id][key]` keeps duplicates
+            # (append-only by design; the merge-detection condition in `run`
+            # uses `in` on it), but the dataclass surface dedupes so a
+            # bidirectional run's `icps` stays `[(4,)]` rather than `[(4,), (4,)]`
+            # both pre- and post-pickle.
+            seen = []
+            for icp in key_to_icps.get(key, []):
+                if icp not in seen:
+                    seen.append(icp)
+            self.continuations[key] = Continuation(
+                key=key,
+                name=key_to_name.get(key),
+                branch_id=key_to_branch.get(key, 0),
+                icps=seen,
+                auto_solution=self.auto_solutions.get(key),
+                summary=self.results.get(key),
+            )
+
+    def get_continuation(self, key_or_name: Union[int, str]) -> "Continuation":
+        """Return the `Continuation` dataclass for a stored continuation,
+        looked up by user-supplied name or by pyauto-key int.
+
+        Examples
+        --------
+        >>> sols, _ = ode.run(starting_point='EP2', name='eta_branch', ICP='eta', ...)
+        >>> cont = ode.get_continuation('eta_branch')
+        >>> cont.branch_id, cont.icps, len(cont.summary)
+        (1, [(4,)], 30)
+        """
+        if isinstance(key_or_name, str):
+            try:
+                key = self._results_map[key_or_name]
+            except KeyError:
+                raise KeyError(
+                    f"No continuation named {key_or_name!r}; "
+                    f"known names: {sorted(self._results_map)}"
+                )
+        else:
+            key = key_or_name
+        try:
+            return self.continuations[key]
+        except KeyError:
+            raise KeyError(
+                f"No continuation with key {key!r}; "
+                f"known keys: {sorted(self.continuations)}"
+            )
 
     def get_summary(self, cont: Optional[Union[Any, str, int]] = None, point=None) -> DataFrame:
         """Extract summary of continuation from PyCoBi.

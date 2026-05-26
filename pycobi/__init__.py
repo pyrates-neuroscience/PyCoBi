@@ -31,7 +31,7 @@ __author__ = "Richard Gast"
 __status__ = "Development"
 __version__ = "0.9.1"
 
-from .pycobi import ODESystem
+from .pycobi import ODESystem, Continuation
 from .utility import (
     get_lyapunov_exponents,
     get_solution_eigenvalues,
