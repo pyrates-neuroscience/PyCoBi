@@ -1,9 +1,42 @@
-from typing import List, Any
+import re
+from typing import List, Any, Optional
+
 import numpy as np
 
 
 # auto-object related utility functions
 #######################################
+
+
+# ---------------------------------------------------------------------------
+# Regexes for parsing auto-07p's per-point diagnostic text blocks.
+#
+# A typical block (one per point) looks like:
+#
+#     BR    PT  IT         PAR           L2-NORM
+#      1     5   0       -4.56412E+00   1.82904E+00
+#      ...
+#      1     5         Hopf Function:   0.00000E+00
+#      1     5         Eigenvalues  :   Stable:   2
+#      1     5         Eigenvalue  1:  -2.12891E+00   0.00000E+00
+#      1     5         Eigenvalue  2:  -5.17236E+00   0.00000E+00
+#      1     5         Fold Function:   9.49088E-01
+#      ...
+#
+# Equilibrium continuations emit "Eigenvalues" + "Eigenvalue N:"; limit-cycle
+# continuations emit "Multipliers" + "Multiplier N:" with Floquet multipliers.
+# ---------------------------------------------------------------------------
+
+_STABLE_COUNT_RE = re.compile(
+    r'(?:Eigenvalues|Multipliers)\s*:\s*Stable:\s*(\d+)',
+)
+# Capture (index, real, imag) per eigenvalue / multiplier line. The leading
+# `\d+\s+-?\d+` consumes the BR/PT prefix; PT is signed in auto's output.
+_EIG_LINE_RE = re.compile(
+    r'^\s*\d+\s+-?\d+\s+(?:Eigenvalue|Multiplier)\s+(\d+):\s*(\S+)\s+(\S+)\s*$',
+    re.MULTILINE,
+)
+_NO_CONVERGENCE = "NOTE:No converge"
 
 
 def get_branch_info(branch: Any) -> tuple:
@@ -139,32 +172,82 @@ def get_point_diagnostics(s: Any) -> str:
 
     return diag
 
-def get_solution_stability(s: Any) -> bool:
-    """Return stability of a solution.
+def parse_point_diagnostics(s: Any, diag: Optional[str] = None) -> dict:
+    """Parse the auto-07p per-point diagnostic text block into structured fields.
+
+    Used as a one-shot parser by `get_solution_stability` and `get_solution_eigenvalues`
+    so multi-metric summaries (`_create_summary` with stability + eigenvalues +
+    lyapunov) only pay the regex cost once per point.
 
     Parameters
     ----------
     s
-        Solution object on the branch.
+        Solution object as returned by auto-07p.
+    diag
+        Optional pre-fetched diagnostic text for `s` (skips the
+        `get_point_diagnostics(s)` lookup). Pass this when the caller already
+        has the text, e.g. when iterating multiple points and batching the
+        fetch.
 
     Returns
     -------
-    bool
-        True, if the solution is stable.
+    dict with keys:
+        ``stable``      bool or None — True if the solution is stable. None if
+                        no Eigenvalues/Multipliers line is present AND auto's
+                        PT-sign convention can't be read from `s.b`.
+        ``eigenvalues`` list[complex] — eigenvalues (equilibrium continuation)
+                        or Floquet multipliers (limit-cycle continuation), in
+                        the order auto-07p emits them. Empty if the point did
+                        not converge or no spectrum is recorded.
+        ``text``        str — the raw diagnostic block (kept for callers that
+                        still need to grep for things this parser doesn't
+                        surface, e.g. Hopf/Fold/BP function values).
     """
+    if diag is None:
+        diag = get_point_diagnostics(s)
+    out = {'text': diag, 'stable': None, 'eigenvalues': []}
 
-    diag = get_point_diagnostics(s)
+    if _NO_CONVERGENCE in diag:
+        return out
 
-    if "Eigenvalues" in diag:
-        diag_line = "Eigenvalues  :   Stable:"
-    elif "Multipliers" in diag:
-        diag_line = "Multipliers:     Stable:"
+    # --- stability ---
+    m = _STABLE_COUNT_RE.search(diag)
+    if m:
+        try:
+            ndim = s.data['NDIM']
+        except (AttributeError, KeyError, TypeError):
+            ndim = None
+        if ndim is not None:
+            out['stable'] = int(m.group(1)) >= ndim
     else:
-        return s.b['solution'].b['PT'] < 0
-    idx = diag.find(diag_line) + len(diag_line)
-    value = int(diag[idx:].split("\n")[0])
-    target = s.data['NDIM']
-    return value >= target
+        # No spectrum recorded — fall back to auto's native PT-sign convention
+        # (auto encodes stability as the sign of the point index in fort.7).
+        try:
+            out['stable'] = s.b['PT'] > 0
+        except (AttributeError, KeyError, TypeError):
+            pass  # leave as None
+
+    # --- eigenvalues / Floquet multipliers ---
+    for m in _EIG_LINE_RE.finditer(diag):
+        real, imag = m.group(2), m.group(3)
+        try:
+            out['eigenvalues'].append(complex(float(real), float(imag)))
+        except ValueError:
+            # malformed numeric in the diagnostic line — skip this entry but
+            # keep parsing the rest
+            pass
+
+    return out
+
+
+def get_solution_stability(s: Any) -> bool:
+    """Return stability of a solution.
+
+    Thin wrapper around `parse_point_diagnostics` — when extracting multiple
+    diagnostic fields for the same point, call `parse_point_diagnostics` once
+    and reuse its dict to avoid re-parsing the text.
+    """
+    return bool(parse_point_diagnostics(s)['stable'])
 
 
 def get_solution_variables(s: Any, variables: list, extract_time: bool = False) -> list:
@@ -213,70 +296,15 @@ def get_solution_params(s: Any, params: list) -> list:
     return [s[p] for p in params]
 
 
-def get_solution_eigenvalues(s: Any, branch: int, point: int) -> list:
-    """Extracts eigenvalue spectrum from a solution point on a branch of solutions.
+def get_solution_eigenvalues(s: Any, branch: int = None, point: int = None) -> list:
+    """Return eigenvalues (or Floquet multipliers, for periodic solutions) of a point.
 
-    Parameters
-    ----------
-    s
-        Solution object as returned by `auto`.
-    branch
-        Branch ID as assigned by `auto`.
-    point
-        Index of the solution on the branch.
-
-    Returns
-    -------
-    list
-        List of eigenvalues. If solution is periodic, the list contains floquet multipliers instead of eigenvalues.
+    Thin wrapper around `parse_point_diagnostics`. The `branch` and `point`
+    arguments are kept for backward compatibility but are no longer used —
+    `parse_point_diagnostics` reads the diagnostic block via `s.b.branch` /
+    `s.b.idx` directly.
     """
-
-    eigenvals = []
-
-    # extract point index from diagnostics
-    diag = get_point_diagnostics(s)
-
-    if "NOTE:No converge" in diag:
-        return eigenvals
-
-    # find index of line in diagnostic output where eigenvalue information are starting
-    idx = diag.find('Stable:')
-    if not idx:
-        return eigenvals
-    diag = diag[idx:]
-    diag_split = diag.split("\n")
-
-    # check whether branch and point identifiers match the targets
-    branch_str = f' {branch} '
-    point_str = f' {point+1} '
-    if branch_str in diag_split[1] and point_str in diag_split[1] and \
-            ('Eigenvalue' in diag_split[1] or 'Multiplier' in diag_split[1]):
-
-        # go through lines of system diagnostics and extract eigenvalues/floquet multipliers
-        i = 1
-        while i < len(diag_split):
-
-            diag_tmp = diag_split[i]
-            diag_tmp_split = [d for d in diag_tmp.split(' ') if d != ''][2:]
-
-            # check whether line contains eigenvals or floquet mults. If not, stop while loop.
-            if not diag_tmp_split:
-                break
-            if 'Eigenvalue' not in diag_tmp_split[0] and 'Multiplier' not in diag_tmp_split[0]:
-                break
-
-            # extract eigenvalues/floquet multipliers
-            try:
-                idx2 = diag_tmp_split.index(f"{i}")
-            except ValueError:
-                idx2 = diag_tmp_split.index(f"{i}:")
-            real = float(diag_tmp_split[idx2+1])
-            imag = float(diag_tmp_split[idx2+2])
-            eigenvals.append(complex(real, imag))
-
-            i += 1
-
-    return eigenvals
+    return parse_point_diagnostics(s)['eigenvalues']
 
 
 def get_lyapunov_exponents(eigenvals, period) -> list:

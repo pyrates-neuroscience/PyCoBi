@@ -6,7 +6,7 @@ import os
 import re
 
 import pytest
-from pycobi import ODESystem
+from pycobi import ODESystem, parse_point_diagnostics
 from pyrates import clear
 from pytest import fixture, approx, raises
 import numpy as np
@@ -259,6 +259,107 @@ def test_1_5_to_file_roundtrip(auto_dir, tmp_path):
     ode_w.close_session()
 
 
+class _MockSol:
+    """Minimal solution-object stand-in for `parse_point_diagnostics`:
+    only `.data['NDIM']` and `.b['PT']` need to be lookup-able.
+    """
+    def __init__(self, ndim, pt=None):
+        self.data = {'NDIM': ndim}
+        self.b = {'PT': pt} if pt is not None else {}
+
+
+def test_1_7_parse_point_diagnostics_synthetic():
+    """`parse_point_diagnostics` extracts stability + eigenvalues from auto-07p
+    diagnostic blocks using a single regex pass, with synthetic inputs covering:
+      - the standard 2-dim equilibrium case
+      - NDIM > 9 (eigenvalue indices like 10, 11, 12) which the previous
+        token-based parser was suspected of mishandling — verified here
+      - limit-cycle continuation ('Multipliers' + 'Multiplier N:' format)
+      - no-convergence blocks (empty spectrum, stability=None)
+      - missing-spectrum block (falls back to auto's PT-sign convention)
+      - malformed numeric entries (skipped, parser keeps going)
+    """
+    # --- 1. Standard NDIM=2 stable equilibrium ---
+    diag = """
+   1     5         Eigenvalues  :   Stable:   2
+   1     5         Eigenvalue  1:  -2.12891E+00   0.00000E+00
+   1     5         Eigenvalue  2:  -5.17236E+00   0.00000E+00
+"""
+    res = parse_point_diagnostics(_MockSol(ndim=2), diag=diag)
+    assert res['stable'] is True
+    assert len(res['eigenvalues']) == 2
+    assert res['eigenvalues'][0] == complex(-2.12891, 0.0)
+    assert res['eigenvalues'][1] == complex(-5.17236, 0.0)
+
+    # --- 2. NDIM=10 with 7 stable -> unstable; tests 10/11/12 indices ---
+    diag = """
+   1     5         Eigenvalues  :   Stable:   7
+   1     5         Eigenvalue  1:  -2.12891E+00   0.00000E+00
+   1     5         Eigenvalue  2:  -5.17236E+00   0.00000E+00
+   1     5         Eigenvalue  3:  -1.50000E+00   1.00000E+00
+   1     5         Eigenvalue  4:  -1.50000E+00  -1.00000E+00
+   1     5         Eigenvalue  5:  -8.00000E-01   0.00000E+00
+   1     5         Eigenvalue  6:  -7.00000E-01   0.00000E+00
+   1     5         Eigenvalue  7:  -3.00000E-01   0.00000E+00
+   1     5         Eigenvalue  8:   5.00000E-01   0.00000E+00
+   1     5         Eigenvalue  9:   8.00000E-01   2.00000E+00
+   1     5         Eigenvalue 10:   8.00000E-01  -2.00000E+00
+"""
+    res = parse_point_diagnostics(_MockSol(ndim=10), diag=diag)
+    assert res['stable'] is False, "7 stable < NDIM=10 should report unstable"
+    assert len(res['eigenvalues']) == 10
+    # eigenvalues kept in auto's emit order; #10's real/imag came through correctly
+    assert res['eigenvalues'][9] == complex(0.8, -2.0)
+
+    # --- 3. Limit-cycle continuation: 'Multipliers' + 'Multiplier N:' ---
+    diag = """
+   1    20         Multipliers:     Stable:   3
+   1    20         Multiplier   1:   1.00000E+00   0.00000E+00
+   1    20         Multiplier   2:   5.00000E-01   0.00000E+00
+   1    20         Multiplier   3:   2.00000E-01   0.00000E+00
+"""
+    res = parse_point_diagnostics(_MockSol(ndim=3), diag=diag)
+    assert res['stable'] is True
+    assert len(res['eigenvalues']) == 3
+    assert res['eigenvalues'][0] == complex(1.0, 0.0)
+
+    # --- 4. No-convergence block: empty spectrum, stability=None ---
+    diag = """
+   1   100         NOTE:No convergence with fixed step size — aborting
+"""
+    res = parse_point_diagnostics(_MockSol(ndim=2), diag=diag)
+    assert res['stable'] is None
+    assert res['eigenvalues'] == []
+
+    # --- 5. No spectrum recorded -> fall back to PT sign convention ---
+    diag = """
+  BR    PT  IT         PAR           L2-NORM
+   1     5   0       -4.56E+00   1.82E+00
+"""
+    # PT > 0 -> stable
+    res = parse_point_diagnostics(_MockSol(ndim=2, pt=16), diag=diag)
+    assert res['stable'] is True
+    # PT < 0 -> unstable (auto encodes this in fort.7 for the LP it just crossed)
+    res = parse_point_diagnostics(_MockSol(ndim=2, pt=-16), diag=diag)
+    assert res['stable'] is False
+    # No PT either -> stability genuinely unknown
+    res = parse_point_diagnostics(_MockSol(ndim=2), diag=diag)
+    assert res['stable'] is None
+
+    # --- 6. Malformed numeric in one entry: skip it, keep parsing the rest ---
+    diag = """
+   1     5         Eigenvalues  :   Stable:   2
+   1     5         Eigenvalue  1:  -2.12891E+00   0.00000E+00
+   1     5         Eigenvalue  2:  ----GARBAGE----   bogus
+   1     5         Eigenvalue  3:  -1.00000E+00   0.00000E+00
+"""
+    res = parse_point_diagnostics(_MockSol(ndim=3), diag=diag)
+    # entries 1 and 3 parsed; entry 2 silently dropped because of bad floats
+    assert len(res['eigenvalues']) == 2
+    assert res['eigenvalues'][0] == complex(-2.12891, 0.0)
+    assert res['eigenvalues'][1] == complex(-1.0, 0.0)
+
+
 def test_1_6_bidirectional_no_magic_name(auto_dir):
     """`bidirectional=True` merges the forward and reverse halves of a
     continuation into a single branch registered under the user's `name`.
@@ -297,6 +398,52 @@ def test_1_6_bidirectional_no_magic_name(auto_dir):
         )
         assert eta_vals.max() > -5.0, (
             f"forward direction didn't extend past start: max eta = {eta_vals.max()}"
+        )
+    finally:
+        ode.close_session()
+
+
+def test_1_8_stability_across_fold(auto_dir):
+    """A QIF equilibrium continuation in eta crosses a saddle-node fold at
+    eta~=-3.13. Before the LP we're on the stable lower branch; after the LP
+    we're on the unstable middle branch. Pins B7: `_create_summary` must
+    populate the `stability` column with both True and False values, with
+    stability flipping where auto reports an LP.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        sols, _ = ode.run(
+            starting_point='EP2', name='eq_fold', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=30, NPR=1,  # NPR=1: label every point
+            DS=0.05, DSMAX=0.5,
+            get_stability=True,
+        )
+        # there should be at least one LP recorded
+        bifs = list(sols['bifurcation'].values.ravel())
+        assert 'LP' in bifs, f"expected LP in bifurcation column, got {bifs}"
+
+        # stability column has both stable and unstable points
+        stab = list(sols['stability'].values.ravel())
+        assert any(stab), "no stable points recorded"
+        assert not all(stab), "no unstable points recorded — did the run cross the fold?"
+
+        # the pre-LP points should be stable, post-LP unstable
+        # (auto's PT-sign convention: positive PT before crossing, negative after)
+        lp_pos = bifs.index('LP')
+        pre = stab[:lp_pos]
+        post = stab[lp_pos + 1:]
+        assert all(pre), f"all pre-LP points should be stable, got {pre}"
+        # post-LP we expect at least one unstable; not necessarily all
+        # (the curve may bend back to a different stable branch within NMX)
+        assert any(not s for s in post), (
+            f"expected at least one unstable point past the LP, got {post}"
         )
     finally:
         ode.close_session()

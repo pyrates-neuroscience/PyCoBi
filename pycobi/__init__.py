@@ -32,5 +32,10 @@ __status__ = "Development"
 __version__ = "0.9.1"
 
 from .pycobi import ODESystem
-from .utility import get_lyapunov_exponents, get_solution_eigenvalues, fractal_dimension
+from .utility import (
+    get_lyapunov_exponents,
+    get_solution_eigenvalues,
+    parse_point_diagnostics,
+    fractal_dimension,
+)
 from .automated_continuation import continue_period_doubling_bf, codim2_search

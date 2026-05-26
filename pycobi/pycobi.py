@@ -11,8 +11,8 @@ from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from typing import Union, Any, Optional
 
-from .utility import get_solution_stability, get_solution_keys, get_branch_info, get_solution_variables, \
-    get_solution_params, get_solution_eigenvalues, get_lyapunov_exponents
+from .utility import get_solution_keys, get_branch_info, get_solution_variables, \
+    get_solution_params, get_lyapunov_exponents, parse_point_diagnostics
 
 
 # auto-07p reserves PAR(11)..PAR(14) for internal use (period, time, etc.), so
@@ -1114,7 +1114,6 @@ class ODESystem:
                     columns_1d.append("bifurcation_index")
 
                 # store parameter and variable information
-                branch, _ = get_branch_info(s)
                 for var, val in zip(variables, var_vals):
                     if len(val) > 1 and reduce_limit_cycle:
                         data_2d_tmp.extend([np.min(val), np.max(val)])
@@ -1136,9 +1135,15 @@ class ODESystem:
                     if add_columns:
                         columns_1d.append('time')
 
+                # parse the auto-07p diagnostic block once per point and reuse
+                # the result for stability + eigenvalues + lyapunov below
+                # (avoids re-fetching and re-regex-parsing the same text up
+                # to three times per point on a multi-metric summary).
+                diag = parse_point_diagnostics(s) if (stability or eigenvals or lyapunov_exp) else None
+
                 # store stability information
                 if stability:
-                    data_1d_tmp.append(get_solution_stability(s))
+                    data_1d_tmp.append(bool(diag['stable']))
                     if add_columns:
                         columns_1d.append('stability')
 
@@ -1153,7 +1158,7 @@ class ODESystem:
 
                 # store information about local eigenvalues/lyapunov exponents
                 if eigenvals or lyapunov_exp:
-                    evs = get_solution_eigenvalues(s, branch, point)
+                    evs = diag['eigenvalues']
                     if eigenvals:
                         for i, v in enumerate(evs):
                             data_2d_tmp.append(v)
