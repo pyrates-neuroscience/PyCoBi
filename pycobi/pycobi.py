@@ -130,7 +130,7 @@ class ODESystem:
 
     @classmethod
     def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
-                  init_kwargs: dict = None, **kwargs):
+                  init_kwargs: dict = None, analytical_jacobian: bool = True, **kwargs):
         """Instantiates `ODESystem` from a YAML definition file.
 
         Parameters
@@ -149,6 +149,11 @@ class ODESystem:
         init_kwargs
             Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
             integration.
+        analytical_jacobian
+            If true (default), instruct PyRates to symbolically differentiate the vector field and emit DFDU/DFDP
+            inside the generated `func` subroutine; the generated `c.*` file will set `JAC=1` so auto-07p uses the
+            analytical Jacobian. Set to false to fall back to auto-07p's finite-difference Jacobian (useful when
+            symbolic differentiation is slow or produces unwieldy expressions for the model at hand).
         kwargs
             Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
             generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
@@ -160,11 +165,12 @@ class ODESystem:
         """
 
         return cls.from_template(CircuitTemplate.from_yaml(path), working_dir=working_dir, auto_dir=auto_dir,
-                                 init_cont=init_cont, init_kwargs=init_kwargs, **kwargs)
+                                 init_cont=init_cont, init_kwargs=init_kwargs,
+                                 analytical_jacobian=analytical_jacobian, **kwargs)
 
     @classmethod
     def from_template(cls, template: CircuitTemplate, working_dir: str = None, auto_dir: str = None,
-                      init_cont: bool = True, init_kwargs: dict = None, **kwargs):
+                      init_cont: bool = True, init_kwargs: dict = None, analytical_jacobian: bool = True, **kwargs):
         """Instantiates `ODESystem` from a `pyrates.CircuitTemplate`.
 
         Parameters
@@ -183,6 +189,12 @@ class ODESystem:
         init_kwargs
             Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
             integration.
+        analytical_jacobian
+            If true (default), instruct PyRates to symbolically differentiate the vector field and emit DFDU/DFDP
+            inside the generated `func` subroutine; the generated `c.*` file will set `JAC=1` so auto-07p uses the
+            analytical Jacobian. Set to false to fall back to auto-07p's finite-difference Jacobian (useful when
+            symbolic differentiation is slow or produces unwieldy expressions for the model at hand). Can be
+            overridden on a per-continuation basis by passing `JAC=0` or `JAC=1` to `ODESystem.run`.
         kwargs
             Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
             generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
@@ -217,8 +229,8 @@ class ODESystem:
         # generate fortran files
         prec = kwargs.pop("float_precision", "float64")
         _, _, params, state_vars = template.get_run_func(func_name, dt, file_name=file_name, backend="fortran",
-                                                         float_precision=prec, auto=True, vectorize=False,
-                                                         solver=solver, **kwargs)
+                                                         float_precision=prec, auto=True, auto_jac=analytical_jacobian,
+                                                         vectorize=False, solver=solver, **kwargs)
 
         # initialize ODESystem
         return cls(auto_dir=auto_dir, init_cont=init_cont, c="ivp", eq_file=file_name, template=template,
@@ -321,7 +333,10 @@ class ODESystem:
         name
             Name, under which the resulting solution branch will be accessible for future continuations.
         auto_kwargs
-            Additional keyword arguments to be passed to the auto command `run`.
+            Additional keyword arguments to be passed to the auto command `run`. All auto-07p constants can be
+            overridden here (e.g. `NMX`, `DSMAX`, `ICP`, ...). In particular, `JAC=0`/`JAC=1` overrides the
+            Jacobian source for this single continuation: pass `JAC=0` to force finite-difference Jacobian even if
+            `from_template` / `from_yaml` was instantiated with `analytical_jacobian=True`, and vice versa.
 
         Returns
         -------
@@ -1129,6 +1144,14 @@ class ODESystem:
 
     @staticmethod
     def _get_all_var_keys(solution):
+        # Prefer the solution's own coord names — when PyRates emits `unames`
+        # into the auto-07p c.* file (post-pyrates>=1.1), auto exposes state
+        # variables under their user-facing name rather than as ``U(i)``.
+        # Fall back to the historical ``U(i)`` form for hand-written fortran
+        # systems or older PyRates without unames.
+        coords = getattr(solution, 'coordnames', None)
+        if coords:
+            return list(coords)
         return [f'U({i+1})' for i in range(solution['NDIM'])]
 
     @staticmethod
