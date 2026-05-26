@@ -396,8 +396,8 @@ class ODESystem:
 
     def run(self, origin: Union[int, str, object] = None, starting_point: Union[str, int] = None, variables: list = None,
             params: list = None, get_stability: bool = True, get_period: bool = False, get_timeseries: bool = False,
-            get_eigenvals: bool = False, get_lyapunov_exp: bool = False, reduce_limit_cycle: bool = True, 
-            bidirectional: bool = False, name: str = None, **auto_kwargs) -> tuple:
+            get_eigenvals: bool = False, get_lyapunov_exp: bool = False, reduce_limit_cycle: bool = True,
+            bidirectional: bool = False, name: str = None, _reverse_direction: bool = False, **auto_kwargs) -> tuple:
         """
         Wraps auto-07p command `run` and stores requested solution details on instance.
 
@@ -432,6 +432,10 @@ class ODESystem:
             If true, parameter continuation will be performed into both directions for a given continuation parameter.
         name
             Name, under which the resulting solution branch will be accessible for future continuations.
+        _reverse_direction
+            Private flag set internally by the recursive call that `bidirectional=True` makes. Tells `run()` that
+            this invocation is the reverse-direction half of a bidirectional continuation, so the result is merged
+            into the forward branch rather than registered as a fresh continuation. Don't pass manually.
         auto_kwargs
             Additional keyword arguments to be passed to the auto command `run`. All auto-07p constants can be
             overridden here (e.g. `NMX`, `DSMAX`, `ICP`, ...). In particular, `JAC=0`/`JAC=1` overrides the
@@ -500,9 +504,9 @@ class ODESystem:
             pyauto_key = solution_old.pycobi_key
             solution, new_points = self.merge(pyauto_key, solution, new_icp)
 
-        elif name == 'bidirect:cont2' and not bidirectional and 'DS' in auto_kwargs and auto_kwargs['DS'] == '-':
+        elif _reverse_direction and 'DS' in auto_kwargs and auto_kwargs['DS'] == '-':
 
-            # get key from old solution and merge with new solution
+            # reverse half of a bidirectional run: merge into the forward branch
             solution_old = self.auto_solutions[self._last_cont]
             pyauto_key = solution_old.pycobi_key
             solution, new_points = self.merge(pyauto_key, solution, new_icp)
@@ -524,9 +528,11 @@ class ODESystem:
         self._last_cont = pyauto_key
         self._branches[new_branch][pyauto_key].append(new_icp)
 
-        # store key of continuation results
+        # store key of continuation results (the reverse-direction half of a
+        # bidirectional run doesn't register a fresh name — it merges into the
+        # forward branch which is already in _results_map under the user's name)
         self._cont_num = len(self.auto_solutions)
-        if name and name != 'bidirect:cont2':
+        if name and not _reverse_direction:
             self._results_map[name] = pyauto_key
 
         # if continuation should be bidirectional, call this method again with reversed continuation direction
@@ -534,12 +540,14 @@ class ODESystem:
 
         if bidirectional:
 
-            # perform continuation in opposite direction
+            # perform continuation in opposite direction; the recursive call's
+            # _reverse_direction=True tells it to merge into this branch rather
+            # than register itself as a fresh continuation.
             ds = auto_kwargs.pop('DS', None)
             _, solution = self.run(origin, starting_point, variables=variables, params=params,
                                    get_stability=get_stability, get_period=get_period, get_timeseries=get_timeseries,
                                    get_eigenvals=get_eigenvals, get_lyapunov_exp=get_lyapunov_exp, bidirectional=False,
-                                   name='bidirect:cont2', DS=1e-3 if ds == '-' else '-', **auto_kwargs)
+                                   _reverse_direction=True, DS=1e-3 if ds == '-' else '-', **auto_kwargs)
 
         else:
 

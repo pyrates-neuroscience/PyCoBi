@@ -259,6 +259,49 @@ def test_1_5_to_file_roundtrip(auto_dir, tmp_path):
     ode_w.close_session()
 
 
+def test_1_6_bidirectional_no_magic_name(auto_dir):
+    """`bidirectional=True` merges the forward and reverse halves of a
+    continuation into a single branch registered under the user's `name`.
+
+    Pins B6: the recursive reverse-direction call no longer overloads
+    `name='bidirect:cont2'` to flag itself — that's now `_reverse_direction=True`,
+    a private kwarg — so a user is free to name a continuation 'bidirect:cont2'
+    without breaking the bidirectional state machine.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    # As in test_1_5: parnames={}, unames={} clears auto-07p's runner cache so
+    # preceding PyRates-generated tests don't leak column names into this run.
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        sols, _ = ode.run(
+            starting_point='EP2', name='eta_bd', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=30, NPR=500,
+            bidirectional=True, DS=0.05, DSMAX=0.5,
+        )
+        # Exactly one named continuation registered, under the user's name.
+        assert dict(ode._results_map) == {'eta_bd': 1}
+        # auto_solutions: 0 is the IVP, 1 is the merged forward+reverse curve.
+        # The reverse-direction recursive call merges into 1, doesn't register
+        # a fresh entry.
+        assert sorted(ode.auto_solutions.keys()) == [0, 1]
+        # Merged continuation spans both sides of the starting eta = -5.
+        eta_vals = np.asarray(sols['eta'].values).squeeze()
+        assert eta_vals.min() < -5.0, (
+            f"reverse direction didn't extend past start: min eta = {eta_vals.min()}"
+        )
+        assert eta_vals.max() > -5.0, (
+            f"forward direction didn't extend past start: max eta = {eta_vals.max()}"
+        )
+    finally:
+        ode.close_session()
+
+
 @_requires_pyrates_dev
 def test_2_1_jacobian_parity(auto_dir, tmp_path):
     """Equilibrium continuation should agree between PyRates' analytical Jacobian (JAC=1)
