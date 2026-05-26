@@ -202,6 +202,63 @@ def test_1_4_name_remapping(auto_dir):
     assert remapped['THU'] == {1: 0.5}, "state-var name 'r' should map to U(1) -> 1"
 
 
+def test_1_5_to_file_roundtrip(auto_dir, tmp_path):
+    """`to_file` / `from_file` round-trips both modes after a real continuation.
+
+    Pins two regressions to_file had collected:
+      - `to_file(results_only=False)` used to crash on `_auto` (Python module)
+        and `_temp` (CircuitTemplate with lambdified sympy functions), neither
+        of which pickle. Now both are listed in `_PICKLE_EXCLUDE` and re-derived
+        by `__init__` on load.
+      - `from_file` used to insist that every loaded attribute already exists
+        as a dict on the fresh instance, so any non-dict slot (`_eq`,
+        `_last_cont`, `_cont_num`, ...) raised AttributeError. Now non-dicts
+        are restored via setattr.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    # `parnames={}, unames={}` clears auto-07p's runner cache (see auto/runAUTO.py
+    # config(): parnames/unames are intentionally retained across run() calls).
+    # Without this clear, a preceding PyRates-generated test leaks its column
+    # names ('r', 'v', 'eta', ...) into the auto solution for this hand-written
+    # qif_eq.f90 — which has no unames declared and expects U(1)/U(2) coords.
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+
+    # results_only=True is the documented happy path; round-trip and compare.
+    rfile = tmp_path / 'ode_results.pkl'
+    ode.to_file(str(rfile), results_only=True, note='hello')
+    ode_r = ODESystem.from_file(str(rfile), auto_dir=auto_dir)
+    assert set(ode_r.results.keys()) == set(ode.results.keys())
+    # the DataFrames should match index-wise
+    for k in ode.results:
+        assert list(ode_r.results[k].index) == list(ode.results[k].index)
+    assert ode_r.additional_attributes == {'note': 'hello'}
+
+    # results_only=False rests on the _PICKLE_EXCLUDE shim — must not raise.
+    wfile = tmp_path / 'ode_whole.pkl'
+    ode.to_file(str(wfile), results_only=False)
+    ode_w = ODESystem.from_file(str(wfile), auto_dir=auto_dir)
+    # The non-dict scalars and the _var_map dicts must come back identical.
+    assert ode_w._eq == ode._eq
+    assert ode_w._cont_num == ode._cont_num
+    assert ode_w._var_map == ode._var_map
+    assert ode_w._var_map_inv == ode._var_map_inv
+    # Excluded slots: _auto is the live module, _temp is unset for the
+    # hand-written path. Both should still be available on the loaded
+    # instance, supplied by __init__.
+    assert ode_w._auto is not None
+    assert ode_w._temp is None  # __init__ defaults this when no template kwarg
+
+    ode.close_session()
+    ode_r.close_session()
+    ode_w.close_session()
+
+
 @_requires_pyrates_dev
 def test_2_1_jacobian_parity(auto_dir, tmp_path):
     """Equilibrium continuation should agree between PyRates' analytical Jacobian (JAC=1)

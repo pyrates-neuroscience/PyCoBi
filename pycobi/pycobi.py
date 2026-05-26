@@ -34,7 +34,7 @@ class ODESystem:
 
     blocked_indices = _AUTO_BLOCKED_PAR_RANGE
 
-    def __init__(self, eq_file: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
+    def __init__(self, eq_file: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = False,
                  params: list = None, state_vars: list = None, **kwargs) -> None:
         """
 
@@ -47,18 +47,20 @@ class ODESystem:
         auto_dir
             Installation directory of auto-07p.
         init_cont
-            If true, an integration with respect to time will be performed, using the equation file provided via the
-            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
-            and the auto constants provided via the keyword argument `c=<fname>`
-            (a file named `c.<fname>` should exist in `working_dir`).
+            If true, an initial-value integration with respect to time is performed at instantiation, using the
+            equation file provided via the keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in
+            `working_dir`) and the auto constants provided via the keyword argument `c=<fname>` (a file named
+            `c.<fname>` should exist in `working_dir`). Defaults to false — many use cases start from a pre-converged
+            steady state and don't need an IVP, and time integration can be slow or fail to converge for stiff
+            systems. Set to true to opt into the legacy behaviour.
         params
             Optional ordered list with names of all parameters in the model equations. Can be used to refer to model
             parameters.
         state_vars
             Optional ordered list that provides a name for each entry in the state vector of the model equations.
         kwargs
-            Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
-            integration.
+            Additional keyword arguments. When `init_cont=True`, these are forwarded to `ODESystem.run` for the
+            initial time-integration call. Ignored otherwise.
         """
         
         # make sure that auto-07p environment variables are set
@@ -161,7 +163,7 @@ class ODESystem:
         os.chdir(self._orig_dir)
 
     @classmethod
-    def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = True,
+    def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = False,
                   init_kwargs: dict = None, analytical_jacobian: bool = True,
                   auto_constants: Union[str, tuple, list] = ('ivp',), **kwargs):
         """Instantiates `ODESystem` from a YAML definition file.
@@ -175,10 +177,8 @@ class ODESystem:
         auto_dir
             Installation directory of auto-07p.
         init_cont
-            If true, an integration with respect to time will be performed, using the equation file provided via the
-            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
-            and the auto constants provided via the keyword argument `c=<fname>`
-            (a file named `c.<fname>` should exist in `working_dir`).
+            If true, an IVP time integration is run at instantiation against the freshly generated c.ivp file.
+            Defaults to false — set to true to opt into the legacy behaviour. See `__init__` for details.
         init_kwargs
             Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
             integration.
@@ -208,7 +208,7 @@ class ODESystem:
 
     @classmethod
     def from_template(cls, template: CircuitTemplate, working_dir: str = None, auto_dir: str = None,
-                      init_cont: bool = True, init_kwargs: dict = None, analytical_jacobian: bool = True,
+                      init_cont: bool = False, init_kwargs: dict = None, analytical_jacobian: bool = True,
                       auto_constants: Union[str, tuple, list] = ('ivp',), **kwargs):
         """Instantiates `ODESystem` from a `pyrates.CircuitTemplate`.
 
@@ -221,10 +221,8 @@ class ODESystem:
         auto_dir
             Installation directory of auto-07p.
         init_cont
-            If true, an integration with respect to time will be performed, using the equation file provided via the
-            keyword argument `e=<fname>` (a file named `<fname>.f90` should exist in `working_dir`)
-            and the auto constants provided via the keyword argument `c=<fname>`
-            (a file named `c.<fname>` should exist in `working_dir`).
+            If true, an IVP time integration is run at instantiation against the freshly generated c.ivp file.
+            Defaults to false — set to true to opt into the legacy behaviour. See `__init__` for details.
         init_kwargs
             Additional keyword arguments that will be provided to the `ODESystem.run` method for performing the time
             integration.
@@ -312,42 +310,68 @@ class ODESystem:
 
     @classmethod
     def from_file(cls, filename: str, auto_dir: str = None):
-        """Load `ODESystem` from file using pickle.
+        """Load `ODESystem` from a pickle file written by `to_file`.
 
         Parameters
         ----------
         filename
-            Name of the file that contains summary and solution data of an `ODESystem` instance.
+            Path to the pickle file written by `ODESystem.to_file`.
         auto_dir
             Installation directory of `auto-07p`.
 
         Returns
         -------
         ODESystem
-            ODESystem instance containing all the attributes that are available as dictionary entries in `filename`.
+            ODESystem instance with state restored from the file. Slots not stored on disk
+            (the live `auto` module, the PyRates `CircuitTemplate`, the cwd snapshots) are
+            re-initialised by `__init__` rather than from the file.
         """
         pyauto_instance = cls('', auto_dir=auto_dir, init_cont=False)
         with open(filename, 'rb') as f:
             data = pickle.load(f)
         for key, val in data.items():
-            attr = getattr(pyauto_instance, key)
-            if type(attr) is dict:
+            attr = getattr(pyauto_instance, key, None)
+            # Merge dicts in place to preserve any fresh init values; otherwise
+            # just bind the loaded value. This makes from_file work for the
+            # whole-state pickle as well as the results-only one.
+            if isinstance(attr, dict) and isinstance(val, dict):
                 attr.update(val)
             else:
-                raise AttributeError(f'Attribute {key} already exists on this `ODESystem` instance.')
+                setattr(pyauto_instance, key, val)
         return pyauto_instance
 
+    # Slots that to_file deliberately omits. ``dir`` / ``_orig_dir`` are
+    # session-local cwd snapshots that should be re-derived on load.
+    # ``_auto`` is a live Python module (the auto-07p package) — pickle can't
+    # serialise modules, and __init__ re-imports it anyway. ``_temp`` is a
+    # PyRates CircuitTemplate that holds lambdified sympy functions which
+    # don't pickle; users that want the template on disk should pickle it
+    # separately or save the YAML path alongside. ``auto_solutions`` contains
+    # auto-07p bifDiag objects that hold open BufferedReader handles on the
+    # fort.* files and refuse to pickle. ``_last_cont`` is normally an int but
+    # `merge()` rebinds it to a solution object — same problem; skip it and
+    # rely on _cont_num to track the count.
+    _PICKLE_EXCLUDE = frozenset({
+        "dir", "_orig_dir", "_auto", "_temp",
+        "auto_solutions", "_last_cont",
+    })
+
     def to_file(self, filename: str, results_only: bool = True, **kwargs) -> None:
-        """Save continuation results on disc via pickle.
+        """Save the instance state on disc via pickle.
 
         Parameters
         ----------
         filename
-            Name of the file to which the results should be saved.
+            Path to write the pickle file to. If a file already exists at this path it
+            will be overwritten.
         results_only
-            If true, only the `PyCoBi` recordings will be saved.
+            When true (default), only the PyCoBi-side bookkeeping (`results`, `_branches`,
+            `_results_map`) is saved — enough to reproduce DataFrames and plots without
+            rerunning auto-07p. When false, all pickle-safe slots are saved (see
+            `_PICKLE_EXCLUDE` for the slots intentionally omitted because they can't
+            round-trip).
         kwargs
-            Additional data/information to be saved to file. Will be available under the key 'additional_attributes'.
+            Extra metadata to attach to the dump. Restored as `additional_attributes`.
 
         Returns
         -------
@@ -357,8 +381,8 @@ class ODESystem:
         if results_only:
             data = {'results': self.results, '_branches': self._branches, '_results_map': self._results_map}
         else:
-            skip = ["dir", "_orig_dir"]
-            data = {key: getattr(self, key) for key in self.__slots__ if key not in skip}
+            data = {key: getattr(self, key)
+                    for key in self.__slots__ if key not in self._PICKLE_EXCLUDE}
         data.update({'additional_attributes': kwargs})
 
         try:
