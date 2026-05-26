@@ -4,7 +4,7 @@ import numpy as np
 
 
 def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, Any], pyauto_instance: Any,
-                                max_iter: int = 1000, iteration: int = 0, precision: int = 3, pds: list = [],
+                                max_iter: int = 1000, iteration: int = 0, precision: int = 3, pds: list = None,
                                 **kwargs) -> tuple:
     """Automatically continue a cascade of period doubling bifurcations. Returns the labels of the continuation and the
     pycobi instance they were run on.
@@ -24,6 +24,8 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
     -------
     tuple
     """
+    if pds is None:
+        pds = []
     solutions = []
     params = kwargs['ICP']
     i = 1
@@ -41,7 +43,7 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
                                               **kwargs)
             bfs = s_tmp.loc[:, ['bifurcation', f'PAR({params[0]})', f'PAR({params[1]})']]
 
-            for bf, p1, p2 in bfs:
+            for bf, p1, p2 in bfs.itertuples(index=False, name=None):
 
                 param_pos = np.round([p1, p2], decimals=precision)
 
@@ -114,7 +116,7 @@ def codim2_search(params: list, starting_points: list, origin: Union[str, int, A
             # get types of all solutions along curve
             codim2_bifs = sols.loc[:, ['bifurcation', f'PAR({params[0]})', f'PAR({params[1]})']]
 
-            for bf, p1, p2 in codim2_bifs:
+            for bf, p1, p2 in codim2_bifs.itertuples(index=False, name=None):
 
                 param_pos = np.round([p1, p2], decimals=precision)
 

@@ -241,7 +241,8 @@ class ODESystem:
             ODESystem instance containing all the attributes that are available as dictionary entries in `filename`.
         """
         pyauto_instance = cls('', auto_dir=auto_dir, init_cont=False)
-        data = pickle.load(open(filename, 'rb'))
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
         for key, val in data.items():
             attr = getattr(pyauto_instance, key)
             if type(attr) is dict:
@@ -275,9 +276,11 @@ class ODESystem:
         data.update({'additional_attributes': kwargs})
 
         try:
-            pickle.dump(data, open(filename, 'x'))
-        except (FileExistsError, TypeError):
-            pickle.dump(data, open(filename, 'wb'))
+            with open(filename, 'xb') as f:
+                pickle.dump(data, f)
+        except FileExistsError:
+            with open(filename, 'wb') as f:
+                pickle.dump(data, f)
 
     def run(self, origin: Union[int, str, object] = None, starting_point: Union[str, int] = None, variables: list = None,
             params: list = None, get_stability: bool = True, get_period: bool = False, get_timeseries: bool = False,
@@ -1030,7 +1033,7 @@ class ODESystem:
                     evs = get_solution_eigenvalues(s, branch, point)
                     if eigenvals:
                         for i, v in enumerate(evs):
-                            data_2d_tmp.append(evs)
+                            data_2d_tmp.append(v)
                             if add_columns:
                                 columns_2d.append(('eigenvalues', i))
                     if lyapunov_exp:
