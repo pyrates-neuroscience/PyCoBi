@@ -1,4 +1,7 @@
 import os
+import pickle
+import warnings
+
 import matplotlib.pyplot as plt
 import numpy as np
 from pandas import DataFrame, MultiIndex, Series
@@ -7,7 +10,6 @@ from pyrates import CircuitTemplate, clear
 from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from typing import Union, Any, Optional
-import pickle
 
 from .utility import get_solution_stability, get_solution_keys, get_branch_info, get_solution_variables, \
     get_solution_params, get_solution_eigenvalues, get_lyapunov_exponents
@@ -645,7 +647,6 @@ class ODESystem:
             cont = self.auto_solutions[cont]
         elif type(cont) is str:
             cont = self.auto_solutions[self._results_map[cont]]
-        branch, icp = get_branch_info(cont)
 
         if point is None:
             return cont, None, None
@@ -660,17 +661,18 @@ class ODESystem:
 
         except (AttributeError, KeyError, TypeError):
 
-            # extract solution point via integer index
-            for branch in cont.data:
+            # extract solution point via integer index — iterate the branch's
+            # data entries until one of them holds the requested label.
+            for bd in cont.data:
                 try:
                     if type(point) is int:
-                        s = branch.labels.by_index[point]
+                        s = bd.labels.by_index[point]
                         solution_name = list(s.keys())[0]
-                        idx = np.argwhere([p == point for p in branch.labels.by_label[solution_name]]).squeeze()
+                        idx = np.argwhere([p == point for p in bd.labels.by_label[solution_name]]).squeeze()
                         solution_idx = int(idx + 1)
                         break
                     else:
-                        s = branch.labels.by_label[point]
+                        s = bd.labels.by_label[point]
                         solution_name, solution_idx = point[:2], point[2:]
                         break
                 except (KeyError, IndexError):
@@ -1261,10 +1263,31 @@ class ODESystem:
         return solution.PAR.coordnames
 
     def _start_from_solution(self, solution: Any) -> Any:
+        """Auto-retry hook for runs that produced only a starting direction.
+
+        When auto-07p's first run returns just a starting-direction diagnostic
+        with a single ``EP`` label (no continuation steps taken), this method
+        re-invokes ``auto.run`` from that EP to actually kick off the
+        continuation. Emits a UserWarning so callers know a second auto.run
+        fired — the second call uses no kwargs from the original, so a user
+        relying on specific NMX / DS / DSMAX overrides may want to know.
+
+        The retry also pops the EP from the original solution's labels dict
+        (auto's API quirk: that popitem is how we extract the seed solution),
+        leaving the original solution object structurally modified.
+        """
         diag = str(solution[0].diagnostics)
         sol_keys = get_solution_keys(solution)
         if 'Starting direction of the free parameter(s)' in diag and len(sol_keys) == 1 and \
                 "EP" in list(solution[0].labels.by_index[sol_keys[0]])[0]:
+            warnings.warn(
+                "auto-07p's first run took no continuation steps (only a starting-direction "
+                "diagnostic was produced); restarting auto.run from the single EP label without "
+                "the original run's keyword arguments. If this is unexpected, check that your "
+                "auto constants (DS, DSMAX, ICP, ...) are appropriate for the model.",
+                UserWarning,
+                stacklevel=3,
+            )
             _, s = solution[0].labels.by_index.popitem()
             solution = self._auto.run(s['EP']['solution'])
         return solution
