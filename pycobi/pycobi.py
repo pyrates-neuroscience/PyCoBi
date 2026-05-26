@@ -188,8 +188,9 @@ class ODESystem:
             for i, key in enumerate(state_vars):
                 self._var_map[key] = ("U", i + 1)
         # Only the "plot" string -> user-facing-name direction is ever read
-        # (by `_to_dataframe` and `extract`). Derive each plot string from the
-        # (kind, idx) tuple — `_map_var(name, "plot")` produces the same form.
+        # (by `_create_summary`'s column remapping and `extract`). Derive each
+        # plot string from the (kind, idx) tuple — `_map_var(name, "plot")`
+        # produces the same form.
         for name in self._var_map:
             self._var_map_inv[self._map_var(name, "plot")] = name
 
@@ -1265,10 +1266,16 @@ class ODESystem:
             self._bifurcation_styles.update({bf_type: {'marker': marker, 'color': color}})
 
     def _create_summary(self, solution: Union[Any, dict], points: list, variables: list, params: list,
-                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool, 
+                        timeseries: bool, stability: bool, period: bool, eigenvals: bool, lyapunov_exp: bool,
                         reduce_limit_cycle: bool
                         ) -> DataFrame:
         """Creates summary of auto continuation and stores it in dictionary.
+
+        Builds a single dict-of-lists keyed by `(column_name, sub_index)` tuples
+        (scalar columns use `''` for the sub-index, matching the legacy shape
+        produced by merging a flat-column DataFrame into a MultiIndex one).
+        One DataFrame construction at the end replaces the previous two-build
+        + column-by-column merge dance.
 
         Parameters
         ----------
@@ -1281,105 +1288,98 @@ class ODESystem:
         period
         eigenvals
         lyapunov_exp
+        reduce_limit_cycle
 
         Returns
         -------
         DataFrame
+            Continuation summary with a `MultiIndex` columns axis; vector-valued
+            quantities (state-var min/max, eigenvalues, lyapunov exponents) use
+            integer sub-indices, scalar quantities use empty-string sub-indices.
         """
 
-        columns_2d, columns_1d, indices, data_2d, data_1d = [], [], [], [], []
-        add_columns = True
+        # ``col_values`` is the single mutable structure built in the loop.
+        # Keys are the (name, sub_index) tuples that go straight into the
+        # final MultiIndex; values are per-row lists. dict insertion order
+        # determines the final column order.
+        col_values: dict = {}
+        indices: list = []
+
         for point in points:
-
-            data_2d_tmp = []
-            data_1d_tmp = []
-
-            # get solution
             s, solution_type, solution_idx = self.get_solution(cont=solution, point=point)
+            if solution_type == 'No Label' or solution_type == 'MX':
+                continue
 
-            if solution_type != 'No Label' and solution_type != 'MX':
+            indices.append(point)
+            var_vals = get_solution_variables(s, variables, timeseries)
+            param_vals = get_solution_params(s, params)
+            # Parse the diagnostic block at most once per point; reused for
+            # stability + eigenvalues + lyapunov below.
+            diag = parse_point_diagnostics(s) if (stability or eigenvals or lyapunov_exp) else None
+            period_val = (get_solution_params(s, ['PAR(11)'])[0]
+                          if (period or lyapunov_exp or eigenvals) else None)
 
-                indices.append(point)
+            # Column insertion order is chosen to match the legacy output
+            # column order produced by the old data_2d-first / data_1d-then-
+            # merged build, so existing user scripts that rely on positional
+            # access keep working.
 
-                # extract variables and params from solution
-                var_vals = get_solution_variables(s, variables, timeseries)
-                param_vals = get_solution_params(s, params)
+            # --- state-variable values (vector for limit cycles) ---
+            for var, val in zip(variables, var_vals):
+                if len(val) > 1 and reduce_limit_cycle:
+                    col_values.setdefault((var, 0), []).append(np.min(val))
+                    col_values.setdefault((var, 1), []).append(np.max(val))
+                else:
+                    for i, v in enumerate(val):
+                        col_values.setdefault((var, i), []).append(v)
 
-                # store solution type
-                data_1d_tmp.append(solution_type)
-                data_1d_tmp.append(solution_idx)
-                if add_columns:
-                    columns_1d.append('bifurcation')
-                    columns_1d.append("bifurcation_index")
+            # --- eigenvalues / Floquet multipliers ---
+            if eigenvals:
+                for i, v in enumerate(diag['eigenvalues']):
+                    col_values.setdefault(('eigenvalues', i), []).append(v)
 
-                # store parameter and variable information
-                for var, val in zip(variables, var_vals):
-                    if len(val) > 1 and reduce_limit_cycle:
-                        data_2d_tmp.extend([np.min(val), np.max(val)])
-                        if add_columns:
-                            columns_2d.extend([(var, 0), (var, 1)])
-                    else:
-                        for i, v in enumerate(val):
-                            data_2d_tmp.append(v)
-                            if add_columns:
-                                columns_2d.append((var, i))
-                for param, val in zip(params, param_vals):
-                    data_1d_tmp.append(val)
-                    if add_columns:
-                        columns_1d.append(param)
+            # --- lyapunov exponents ---
+            if lyapunov_exp:
+                for i, lyap in enumerate(get_lyapunov_exponents(diag['eigenvalues'], period_val)):
+                    col_values.setdefault(('lyapunov_exponents', i), []).append(lyap)
 
-                # store time information, if requested
-                if len(var_vals) > len(variables) and timeseries:
-                    data_1d_tmp.append(var_vals[-1])
-                    if add_columns:
-                        columns_1d.append('time')
+            # --- bifurcation type / index ---
+            col_values.setdefault(('bifurcation', ''), []).append(solution_type)
+            col_values.setdefault(('bifurcation_index', ''), []).append(solution_idx)
 
-                # parse the auto-07p diagnostic block once per point and reuse
-                # the result for stability + eigenvalues + lyapunov below
-                # (avoids re-fetching and re-regex-parsing the same text up
-                # to three times per point on a multi-metric summary).
-                diag = parse_point_diagnostics(s) if (stability or eigenvals or lyapunov_exp) else None
+            # --- parameter values ---
+            for param, val in zip(params, param_vals):
+                col_values.setdefault((param, ''), []).append(val)
 
-                # store stability information
-                if stability:
-                    data_1d_tmp.append(bool(diag['stable']))
-                    if add_columns:
-                        columns_1d.append('stability')
+            # --- time vector (when get_timeseries=True) ---
+            if len(var_vals) > len(variables) and timeseries:
+                col_values.setdefault(('time', ''), []).append(var_vals[-1])
 
-                if period or lyapunov_exp or eigenvals:
-                    p = get_solution_params(s, ['PAR(11)'])[0]
+            if stability:
+                col_values.setdefault(('stability', ''), []).append(bool(diag['stable']))
 
-                # store information about oscillation periods
-                if period:
-                    data_1d_tmp.append(p)
-                    if add_columns:
-                        columns_1d.append('period')
+            if period:
+                col_values.setdefault(('period', ''), []).append(period_val)
 
-                # store information about local eigenvalues/lyapunov exponents
-                if eigenvals or lyapunov_exp:
-                    evs = diag['eigenvalues']
-                    if eigenvals:
-                        for i, v in enumerate(evs):
-                            data_2d_tmp.append(v)
-                            if add_columns:
-                                columns_2d.append(('eigenvalues', i))
-                    if lyapunov_exp:
-                        for i, p in enumerate(get_lyapunov_exponents(evs, p)):
-                            data_2d_tmp.append(p)
-                            if add_columns:
-                                columns_2d.append(('lyapunov_exponents', i))
+        # ---- single DataFrame construction ----
+        if not col_values:
+            return DataFrame(index=indices)
 
-                data_2d.append(data_2d_tmp)
-                data_1d.append(data_1d_tmp)
-                add_columns = False
+        # Apply _var_map_inv remapping to translate "PAR(i)" / "U(i)" column
+        # names back to user-facing names where one is registered. Done once,
+        # over the discovered columns, rather than per-point.
+        remapped = [
+            (self._var_map_inv[name] if name in self._var_map_inv else name, sub)
+            for (name, sub) in col_values
+        ]
+        columns = MultiIndex.from_tuples(remapped)
 
-        # arrange data into DataFrame
-        df = self._to_dataframe(data_2d, columns=columns_2d, index=indices)
-        df2 = self._to_dataframe(data_1d, columns=columns_1d, index=indices)
-        for i, key in enumerate(df2.columns.values):
-            df[key] = df2.loc[:, key]
-
-        return df
+        # `index` may have one extra element when the last `points` entry was
+        # dropped mid-row (legacy `_to_dataframe` fallback handled this by
+        # trimming `data[:-1]`). Here every dropped point is filtered out at
+        # the top of the loop so `indices` and the per-column lists agree by
+        # construction.
+        return DataFrame(dict(zip(columns, col_values.values())), index=indices)
 
     def _call_auto(self, starting_point: Union[str, int], origin: Union[Any, dict], **auto_kwargs) -> Any:
         if starting_point:
@@ -1444,32 +1444,6 @@ class ODESystem:
             return idx
         # "plot" mode (the only other mode currently used)
         return f"PAR({idx})" if kind == "P" else f"U({idx})"
-
-    def _to_dataframe(self, data: list, columns: Union[list, tuple], index: list) -> DataFrame:
-
-        # map variable/parameter keys to string-based keys
-        columns_new = []
-        multi_idx = False
-        for c in columns:
-            if type(c) is tuple:
-                col = (self._var_map_inv[c[0]] if c[0] in self._var_map_inv else c[0], c[1])
-                multi_idx = True
-            else:
-                col = self._var_map_inv[c] if c in self._var_map_inv else c
-            columns_new.append(col)
-        if multi_idx:
-            columns = MultiIndex.from_tuples(tuple(columns_new))
-        else:
-            columns = columns_new
-
-        # create dataframe
-        try:
-            return DataFrame(data=data, columns=columns, index=index)
-        except ValueError as e:
-            if len(data) > len(index):
-                return DataFrame(data=data[:-1], columns=columns, index=index)
-            else:
-                raise e
 
     @staticmethod
     def _get_all_var_keys(solution):
@@ -1585,7 +1559,12 @@ class ODESystem:
             styles = [line_style_stable, line_style_stable] if add_min else [line_style_stable]
             colors = [line_color_stable, line_color_stable] if add_min else [line_color_stable]
 
+        # Pop the two LineCollection kwargs we set explicitly so a user
+        # passing `colors=` or `linestyles=` through one of the plot_* helpers
+        # overrides the computed values rather than colliding with them
+        # (passing both via `**kwargs` raises TypeError).
         colors = kwargs.pop('colors', colors)
+        styles = kwargs.pop('linestyles', styles)
         return LineCollection(segments=lines, linestyles=styles, colors=colors, **kwargs)
 
     @staticmethod
@@ -1641,7 +1620,14 @@ class ODESystem:
 
         # create line collection
         array = kwargs.pop('array', 'x')
-        line_col = Line3DCollection(segments=lines, linestyles=styles, **kwargs)
+        # Same as `_get_line_collection`: pop `linestyles` so a user-supplied
+        # value overrides the per-stability-block styles rather than colliding
+        # with the explicit kwarg below.
+        styles = kwargs.pop('linestyles', styles)
+        # NOTE: Line3DCollection takes `lines` as a positional argument (not
+        # `segments=` like the 2D LineCollection). Passing `segments=lines`
+        # used to silently fail on older matplotlib and now raises outright.
+        line_col = Line3DCollection(lines, linestyles=styles, **kwargs)
 
         # post-processing
         if array == 'x':

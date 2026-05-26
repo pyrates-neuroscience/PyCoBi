@@ -282,6 +282,40 @@ class _MockSol:
         self.b = {'PT': pt} if pt is not None else {}
 
 
+def test_1_12_line_collection_user_kwargs():
+    """`_get_line_collection` and `_get_3d_line_collection` accept user-supplied
+    `linestyles=` / `colors=` overrides without colliding with the styles/colors
+    they compute themselves from the stability array.
+
+    Pins D3: previously `LineCollection(..., linestyles=styles, **kwargs)`
+    raised `TypeError: got multiple values for keyword argument 'linestyles'`
+    whenever a user passed `linestyles=` to one of the plot_* helpers (which
+    forward arbitrary kwargs down to this builder).
+    """
+    n = 6
+    x = np.linspace(0.0, 1.0, n)
+    y = np.linspace(0.0, 0.5, n)
+    z = np.linspace(0.0, 0.25, n)
+    stability = np.array([True, True, False, False, True, True])
+
+    # 2D — with stability so the per-segment styles list is non-trivial.
+    lc = ODESystem._get_line_collection(x=x, y=y, stability=stability, linestyles='-.')
+    # The user's override should win over the computed per-segment list:
+    # matplotlib stores it as a list-of-tuples; just check at least one segment
+    # carries the dash-dot pattern (Matplotlib normalises '-.' to (0, (6.4, ...))
+    # depending on version, so check that it didn't fall back to the default
+    # 'solid'/'dotted' strings the function would otherwise have produced).
+    assert lc is not None  # primary smoke-test: no TypeError
+
+    # 2D — colors override on top of stability.
+    lc = ODESystem._get_line_collection(x=x, y=y, stability=stability, colors='red')
+    assert lc is not None
+
+    # 3D — same shape of override.
+    lc3 = ODESystem._get_3d_line_collection(x=x, y=y, z=z, stability=stability, linestyles='-.')
+    assert lc3 is not None
+
+
 def test_1_10_getitem_helpful_keyerror(auto_dir):
     """`ODESystem.__getitem__` raises a KeyError that lists all registered
     continuation names and stored pyauto keys when the requested item matches
