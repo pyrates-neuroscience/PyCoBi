@@ -226,6 +226,67 @@ class ODESystem:
             clear(self._temp, **kwargs)
         os.chdir(self._orig_dir)
 
+    @staticmethod
+    def reset_auto_state() -> None:
+        """Clear auto-07p's per-process cross-run state (``parnames``, ``unames``).
+
+        auto-07p's Python wrapper deliberately leaves the ``parnames`` /
+        ``unames`` entries on its global runner intact between successive
+        ``run()`` calls — see ``auto/runAUTO.py``::
+
+            # do not completely replace existing constants data but
+            # leave the special keys such as unames, parnames, etc, intact
+
+        That's helpful when iterating on a single model, but it leaks across
+        unrelated model loads. Concretely: an `ODESystem` for model A whose
+        generated c.* declares ``unames = {1: 'r', 2: 'v'}`` populates the
+        global runner; instantiating model B whose c.* declares no unames will
+        inherit ``{1: 'r', 2: 'v'}`` and silently relabel B's DataFrame
+        columns with A's state-variable names. The same applies to
+        ``parnames``.
+
+        Call this between unrelated model loads (typically in test teardown,
+        or right before constructing a fresh `ODESystem` from a different
+        model). No-ops if `auto` was never imported, or if its internal layout
+        differs from what we expect.
+        """
+        runner = ODESystem._get_auto_runner()
+        if runner is None:
+            return
+        constants = runner.options.get('constants')
+        if constants is None:
+            return
+        for key in ('parnames', 'unames'):
+            constants[key] = None
+
+    @staticmethod
+    def _get_auto_runner():
+        """Locate auto-07p's global ``runAUTO`` instance via the ``withrunner``
+        closure that ``AUTOSimpleFunctions`` binds into every command.
+
+        Auto's package-level ``run`` / ``load`` / etc. are FunctionType copies
+        whose globals carry a ``withrunner`` closure pointing at the
+        AUTOSimpleFunctions singleton; the singleton's ``_runner`` is the
+        process-wide runAUTO instance that holds the persisted ``constants``
+        dict. Returns ``None`` if auto isn't imported or the layout changes
+        upstream — callers must tolerate that.
+        """
+        try:
+            import auto as a
+        except ImportError:
+            return None
+        run_fn = getattr(a, 'run', None)
+        if run_fn is None:
+            return None
+        withrunner = run_fn.__globals__.get('withrunner')
+        if withrunner is None or withrunner.__closure__ is None:
+            return None
+        for cell in withrunner.__closure__:
+            simple_funcs = cell.cell_contents
+            if hasattr(simple_funcs, '_runner'):
+                return simple_funcs._runner
+        return None
+
     @classmethod
     def from_yaml(cls, path: str, working_dir: str = None, auto_dir: str = None, init_cont: bool = False,
                   init_kwargs: dict = None, analytical_jacobian: bool = True,

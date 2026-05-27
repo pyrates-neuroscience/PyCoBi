@@ -1008,3 +1008,63 @@ def test_3_1_pycobi_vs_auto_ops(auto_dir, tmp_path):
         f"PyCoBi/PyRates ops curve diverges from auto-07p demo:\n"
         f"  p3_grid    = {grid}\n  x1_demo    = {x1_demo_i}\n  x1_yaml    = {x1_yaml_i}"
     )
+
+
+@_requires_pyrates_dev
+def test_1_16_reset_auto_state(auto_dir, tmp_path):
+    """`ODESystem.reset_auto_state()` clears auto-07p's persisted
+    ``parnames`` / ``unames`` so a subsequent model load doesn't inherit
+    them.
+
+    auto-07p's ``runAUTO.config()`` deliberately preserves ``parnames`` /
+    ``unames`` across successive ``run()`` calls within a process (see the
+    ``# do not completely replace existing constants data`` comment in
+    ``runAUTO.py``). That's fine for iterating on one model but leaks across
+    unrelated model loads: a fresh c.* with no ``unames`` declaration will
+    silently inherit names from the previously-loaded model and relabel its
+    DataFrame columns. This test pins three things:
+
+      1. The leak is real — running a PyRates model populates the global
+         runner's parnames/unames.
+      2. `reset_auto_state()` clears both back to `None`.
+      3. The same model loaded after reset still works (sanity check that
+         clearing didn't break anything required for a subsequent run).
+    """
+    # Load a PyRates model that emits parnames/unames into its c.* file.
+    # Construct ODESystem first so `auto` is imported with AUTO_DIR set;
+    # _get_auto_runner imports auto on demand and would otherwise crash on
+    # auto's AUTO_DIR-dependent module init.
+    model_dir = tmp_path / 'leak'
+    model_dir.mkdir()
+    ode = ODESystem.from_yaml(
+        'model_templates.neural_mass_models.qif.qif',
+        working_dir=str(model_dir), auto_dir=auto_dir,
+        file_name='qif_reset', func_name='qif_reset_fn',
+        init_cont=True, NPR=100, NMX=1000,
+    )
+
+    runner = ODESystem._get_auto_runner()
+    assert runner is not None, "could not locate auto-07p global runner"
+
+    # (1) Runner should now hold the populated names — that's the leak.
+    constants = runner.options['constants']
+    assert constants['parnames'], (
+        "auto-07p runner has no parnames after a PyRates-generated run — "
+        "test setup is broken or PyRates is no longer emitting parnames"
+    )
+    assert constants['unames'], (
+        "auto-07p runner has no unames after a PyRates-generated run"
+    )
+
+    ode.close_session(clear_files=True)
+
+    # (2) Clear and verify.
+    ODESystem.reset_auto_state()
+    assert constants['parnames'] is None
+    assert constants['unames'] is None
+
+    # (3) Sanity: helper is a no-op when called a second time on an already-
+    # clean runner; doesn't error and doesn't repopulate.
+    ODESystem.reset_auto_state()
+    assert constants['parnames'] is None
+    assert constants['unames'] is None
