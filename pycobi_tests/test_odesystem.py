@@ -7,10 +7,17 @@ import re
 
 import pytest
 from pycobi import ODESystem, Continuation, parse_point_diagnostics
+from pycobi.automated_continuation import (
+    codim2_search,
+    continue_period_doubling_bf,
+    _bif_series_contains,
+    _resolve_param_for_extract,
+)
 from pycobi.utility import get_branch_info
 from pyrates import clear
 from pytest import fixture, approx, raises
 import numpy as np
+import pandas as pd
 
 
 # Matches an analytical-Jacobian assignment like ``dfdu(1,2) = ...`` (or DFDU);
@@ -1068,3 +1075,196 @@ def test_1_16_reset_auto_state(auto_dir, tmp_path):
     ODESystem.reset_auto_state()
     assert constants['parnames'] is None
     assert constants['unames'] is None
+
+
+# ----------------------------------------------------------------------------
+# automated_continuation.py — Section 4
+# ----------------------------------------------------------------------------
+
+
+def test_4_1_resolve_param_for_extract_unit():
+    """`_resolve_param_for_extract` converts an int auto-07p PAR index into the
+    legacy ``'PAR(i)'`` string form (consumed by ``ODESystem.extract`` via
+    ``_var_map_inv``), and leaves string names alone for the PyRates path
+    where the c.* file already declares ``parnames``.
+    """
+    assert _resolve_param_for_extract(None, 4) == 'PAR(4)'
+    # numpy integer types — auto-07p sometimes feeds these back through
+    assert _resolve_param_for_extract(None, np.int64(7)) == 'PAR(7)'
+    # string parnames pass through unchanged
+    assert _resolve_param_for_extract(None, 'eta') == 'eta'
+    assert _resolve_param_for_extract(None, 'p1') == 'p1'
+
+
+def test_4_2_bif_series_contains_substring():
+    """`_bif_series_contains` tests Series **values** for a substring; the
+    pre-1.0 ``"LP" in series`` form silently tested the *index* labels
+    instead, so the ZH-fold-or-Hopf branch of ``codim2_search`` effectively
+    never fired (the codim-1 1D run's index was integers, not strings).
+    """
+    # Series with non-string index — the broken `"LP" in series` would
+    # have tested labels 0/1/2/3 against "LP", always False.
+    s = pd.Series(['RG', 'LP1', 'EP', 'HB1'], index=[0, 1, 2, 3])
+    assert _bif_series_contains(s, 'LP') is True
+    assert _bif_series_contains(s, 'HB') is True
+    assert _bif_series_contains(s, 'ZH') is False
+    # Exact label match also works (no false negatives for un-suffixed
+    # labels like 'LP' without trailing number).
+    s2 = pd.Series(['LP', 'RG'], index=['a', 'b'])
+    assert _bif_series_contains(s2, 'LP') is True
+    # NaN tolerance: empty / NaN entries don't raise.
+    s3 = pd.Series([None, 'LP1'])
+    assert _bif_series_contains(s3, 'LP') is True
+
+
+def test_4_3_codim2_search_qif_fold_curve_handwritten(auto_dir):
+    """End-to-end smoke test of `codim2_search` on the hand-written QIF.
+
+    Setup: 1D continuation of QIF equilibria in eta finds an LP (saddle-node).
+    Starting `codim2_search` from that LP1 in (eta, Delta) should run a
+    bidirectional 2-parameter continuation and register at least one
+    continuation in the returned dict. The PyRates-style name resolution
+    (``params=['eta', 'Delta']`` — string parnames rather than PAR indices)
+    must work even on this hand-written model where ``_var_map`` was seeded
+    via ``params=[...]`` on construction.
+
+    Pins the pre-1.0 hardcoded ``f'PAR({params[0]})'`` column lookup bug:
+    on the hand-written path with `params=[..., 'eta', ...]`, the columns
+    are remapped to user names so the bare `'PAR(4)'` lookup KeyErrors.
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        # 1D equilibrium continuation in eta — finds LP1 at the fold.
+        _, _ = ode.run(
+            starting_point='EP2', name='eta_for_codim2', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=60, NPR=1, DS=0.05, DSMAX=0.5,
+            get_stability=True,
+        )
+        # codim2 in (eta, Delta) from the LP1 we just found.
+        # Pass string parnames so the PyRates-style name resolution path
+        # is exercised (the int-PAR path is exercised by the original
+        # ICP=14 init_cont).
+        result = codim2_search(
+            params=['eta', 'Delta'], starting_points=['LP1'],
+            origin=ode.get_continuation('eta_for_codim2').key,
+            pyauto_instance=ode, max_recursion_depth=1,
+            NMX=30, NPR=20, DS=0.05, DSMAX=0.5,
+        )
+        # At minimum the seed continuation got registered.
+        assert isinstance(result, dict)
+        assert len(result) >= 1, f"codim2_search produced no continuations: {result}"
+        # The naming convention: f"{name}:{starting_point}" — verify shape.
+        keys = list(result.keys())
+        assert any(k.endswith(':LP1') for k in keys), (
+            f"expected at least one continuation keyed '*:LP1', got {keys}"
+        )
+    finally:
+        ode.close_session()
+
+
+def test_4_4_codim2_search_pyrates_path(auto_dir, tmp_path):
+    """`codim2_search` works when the model comes from PyRates and the
+    summary columns are parnames-resolved (bare 'eta', 'Delta'), not the
+    hand-written 'PAR(i)' form.
+
+    Pins the parnames-blind hardcoded ``f'PAR({params[0]})'`` lookups in
+    the pre-1.0 ``codim2_search`` / ``continue_period_doubling_bf``: on
+    the PyRates path those columns simply don't exist, and the resulting
+    KeyError aborted the entire search.
+    """
+    work = tmp_path / 'codim2_pyrates'
+    work.mkdir()
+    ode = ODESystem.from_yaml(
+        'model_templates.neural_mass_models.qif.qif',
+        working_dir=str(work), auto_dir=auto_dir,
+        file_name='qif_codim2', func_name='qif_codim2_fn',
+        init_cont=True, NPR=100, NMX=500,
+    )
+    try:
+        # 1D continuation in eta to find LP.
+        _, _ = ode.run(
+            starting_point='EP2', name='eta_1d', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=60, NPR=1, DS=0.05, DSMAX=0.5,
+            get_stability=True,
+        )
+        # 2-param codim2 from LP1 — uses parnames string lookup throughout.
+        result = codim2_search(
+            params=['eta', 'Delta'], starting_points=['LP1'],
+            origin=ode.get_continuation('eta_1d').key,
+            pyauto_instance=ode, max_recursion_depth=1,
+            NMX=30, NPR=20, DS=0.05, DSMAX=0.5,
+        )
+        assert len(result) >= 1
+    finally:
+        ode.close_session(clear_files=True)
+
+
+def test_4_5_continue_period_doubling_bf_input_validation():
+    """`continue_period_doubling_bf` raises a clear ValueError when the
+    required ``ICP=[param1, param2]`` kwarg is missing or malformed,
+    instead of failing later with a confusing KeyError from the inner
+    `kwargs['ICP']` access.
+    """
+    # No ICP at all — the pre-1.0 version raised KeyError('ICP') from the
+    # `params = kwargs['ICP']` line; we now raise ValueError up front.
+    with raises(ValueError, match=r"requires ICP"):
+        continue_period_doubling_bf(
+            solution={}, continuation=0, pyauto_instance=None,
+        )
+    # Wrong-shape ICP — must be 2-element list/tuple.
+    with raises(ValueError, match=r"length-2 list/tuple"):
+        continue_period_doubling_bf(
+            solution={}, continuation=0, pyauto_instance=None,
+            ICP='eta',  # bare string, not a 2-tuple
+        )
+    with raises(ValueError, match=r"length-2 list/tuple"):
+        continue_period_doubling_bf(
+            solution={}, continuation=0, pyauto_instance=None,
+            ICP=['eta'],  # single-element list
+        )
+
+
+def test_4_6_continue_period_doubling_bf_no_pds_terminates():
+    """When the input solution dict has no PD points, the function returns
+    an empty list and doesn't recurse / doesn't raise. Pins the early-exit
+    behaviour so users that point this at a non-PD curve get a clean
+    empty result rather than an iteration explosion.
+    """
+    sols, ret_pyauto = continue_period_doubling_bf(
+        solution={
+            1: {'bifurcation': 'EP'},
+            2: {'bifurcation': 'HB1'},
+            3: {'bifurcation': 'LP1'},
+        },
+        continuation=0, pyauto_instance='sentinel',
+        ICP=['eta', 'Delta'],
+    )
+    assert sols == []
+    assert ret_pyauto == 'sentinel'  # passthrough, no calls were made
+
+
+def test_4_7_continue_period_doubling_bf_depth_cap_warns():
+    """The `max_iter` depth cap fires on entry past the threshold and emits
+    a UserWarning rather than silently truncating the cascade.
+    """
+    import warnings as _warnings
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        sols, _ = continue_period_doubling_bf(
+            solution={1: {'bifurcation': 'PD1'}},
+            continuation=0, pyauto_instance=None,
+            ICP=['eta', 'Delta'],
+            max_iter=2, _depth=2,  # at the cap
+        )
+    assert sols == []
+    msgs = [str(w.message) for w in caught]
+    assert any('max_iter=2' in m for m in msgs), (
+        f"expected max_iter warning, got: {msgs}"
+    )
