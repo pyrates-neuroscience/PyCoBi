@@ -919,11 +919,46 @@ class ODESystem:
         """
         summary = self.get_summary(cont)
         columns = [k for k, _ in list(summary.keys())]
-        keys_new = [key if key in columns else self._var_map_inv[key] for key in keys]
+        keys_new = [self._resolve_summary_key(key, columns) for key in keys]
         key_map = {key_old: key_new for key_old, key_new in zip(keys, keys_new)}
         if point:
             return summary.loc[point, keys_new], key_map
         return summary.loc[:, keys_new], key_map
+
+    def _resolve_summary_key(self, key: str, columns: list) -> str:
+        """Resolve a user-supplied key to a column name actually present in the summary.
+
+        Resolution order (each step falls through to the next on miss):
+
+          1. ``key`` itself is a column — common when the user already passes a
+             summary-native name (e.g. ``'eta'``, ``'r'``).
+          2. ``key`` lives in ``_var_map_inv`` — typical when PyCoBi was set up
+             with explicit ``params=[...]`` / ``state_vars=[...]`` and the user
+             passes the auto-07p-native form (``'PAR(4)'``, ``'U(1)'``).
+          3. Strip the namespace prefix from step 2's result and retry — needed
+             when PyRates' ``parnames`` / ``unames`` emit the bare local name
+             (``'eta'``) while PyCoBi's ``_var_map_inv`` carries the namespaced
+             form (``'p/qif_op/eta'``).
+
+        Raises a ``KeyError`` that lists what was tried if nothing matches.
+        """
+        if key in columns:
+            return key
+        mapped = self._var_map_inv.get(key)
+        if mapped is not None and mapped in columns:
+            return mapped
+        bare = mapped.rsplit('/', 1)[-1] if isinstance(mapped, str) else None
+        if bare is not None and bare in columns:
+            return bare
+        tried = [key]
+        if mapped is not None:
+            tried.append(mapped)
+        if bare is not None and bare not in tried:
+            tried.append(bare)
+        raise KeyError(
+            f"{key!r} is not a recognised summary column. Tried: {tried}. "
+            f"Available columns: {columns}."
+        )
 
     def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
                           force_axis_lim_update: bool = False, bifurcation_legend: bool = True,

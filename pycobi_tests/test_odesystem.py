@@ -744,6 +744,47 @@ def test_2_1_jacobian_parity(auto_dir, tmp_path):
     )
 
 
+@_requires_pyrates_dev
+def test_1_15_extract_bare_name_fallback(auto_dir, tmp_path):
+    """`extract` resolves auto-07p-native keys (`PAR(i)` / `U(i)`) to the bare
+    local names that PyRates emits via `parnames` / `unames`.
+
+    Pins the regression flagged in PyCoBi issue #3: in the from_yaml path,
+    `_var_map_inv['PAR(4)']` translates to the *namespaced* name
+    (`'p/qif_op/eta'`) — but the actual DataFrame column for that parameter
+    is the *bare* name (`'eta'`), because PyRates writes parnames into the
+    c.* file. Without the bare-name fallback, the documented call
+    `plot_continuation('PAR(4)', 'U(1)', cont='eta')` raises KeyError because
+    the namespaced lookup misses every column.
+    """
+    model = 'model_templates.neural_mass_models.qif.qif'
+    ode = ODESystem.from_yaml(
+        model, working_dir=str(tmp_path), auto_dir=auto_dir,
+        file_name='qif_extract_mod', func_name='qif_extract',
+        init_cont=True, NMX=500, NPR=500,
+    )
+    try:
+        ode.run(
+            starting_point='EP2', name='eta', ICP='eta',
+            IPS=1, ILP=1, ISP=2,
+            NMX=30, NPR=1, DS=0.05, DSMAX=0.5,
+        )
+        # Mix of auto-07p-native keys and a non-PAR scalar — all three should resolve.
+        result, key_map = ode.extract(
+            ['PAR(4)', 'U(1)', 'bifurcation'], cont='eta',
+        )
+        # PAR(4) and U(1) resolve to the bare names PyRates wrote into the c.* file;
+        # 'bifurcation' is a summary-native column so it passes through unchanged.
+        assert key_map == {'PAR(4)': 'eta', 'U(1)': 'r', 'bifurcation': 'bifurcation'}
+        assert result.shape == (30, 3)
+
+        # A truly missing key surfaces a helpful error listing what was tried.
+        with raises(KeyError, match=r"is not a recognised summary column. Tried:"):
+            ode.extract(['totally_made_up'], cont='eta')
+    finally:
+        ode.close_session(clear_files=True)
+
+
 def test_1_13_starting_point_chaining(auto_dir):
     """Continuations can be chained: a fresh `run()` call started from a labeled
     point on a previous continuation registers as a new entry in `continuations`
