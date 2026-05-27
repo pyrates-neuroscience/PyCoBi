@@ -1268,3 +1268,254 @@ def test_4_7_continue_period_doubling_bf_depth_cap_warns():
     assert any('max_iter=2' in m for m in msgs), (
         f"expected max_iter warning, got: {msgs}"
     )
+
+
+# ----------------------------------------------------------------------------
+# GH / BT recursion — codim-2 handler unit tests
+# ----------------------------------------------------------------------------
+
+
+class _MockODESystem:
+    """Stand-in for `ODESystem` that lets us drive `codim2_search` without
+    auto-07p doing real continuations.
+
+    `run_returns` is a list of `(summary_df, cont_key)` tuples consumed
+    in order, one per `.run()` call. `extract_returns` is keyed by `cont_key`
+    and returns the DataFrame slice that `.extract(['bifurcation', ...])`
+    would yield. If a key is missing, `extract` raises `KeyError` (matching
+    the real method's contract). `run_exception_at`, if set, makes the
+    Nth `run()` call raise `RuntimeError("mock failure")` instead.
+    """
+    def __init__(self, run_returns=None, extract_returns=None,
+                 run_exception_at=None):
+        self.run_returns = list(run_returns or [])
+        self.extract_returns = extract_returns or {}
+        self.run_exception_at = run_exception_at
+        self.run_calls = []  # list of (args, kwargs)
+        self.extract_calls = []
+
+    def run(self, **kwargs):
+        n = len(self.run_calls)
+        self.run_calls.append(kwargs)
+        if self.run_exception_at is not None and n == self.run_exception_at:
+            raise RuntimeError("mock failure")
+        if n >= len(self.run_returns):
+            raise IndexError(
+                f"_MockODESystem.run called {n + 1} times but only "
+                f"{len(self.run_returns)} canned returns supplied"
+            )
+        return self.run_returns[n]
+
+    def extract(self, keys, cont, point=None):
+        self.extract_calls.append((tuple(keys), cont, point))
+        if cont not in self.extract_returns:
+            raise KeyError(f"no mock extract for cont={cont!r}")
+        df = self.extract_returns[cont]
+        # keep only the requested columns
+        cols = [k for k in keys if k in df.columns]
+        return df[cols], {k: k for k in keys}
+
+
+def test_4_8_recurse_codim2_dispatch_unknown_type():
+    """`_recurse_codim2` short-circuits to an empty dict for unrecognised
+    bifurcation types — keeps the main loop forward-compatible if a future
+    auto-07p exposes new codim-2 codes without crashing existing scans.
+    """
+    from pycobi.automated_continuation import _recurse_codim2
+    result = _recurse_codim2(
+        codim2_type='XX', pyauto=None, origin=0, idx=1,
+        params=[1, 2], name='n', recursion=0,
+        max_recursion_depth=3, kwargs_1D_lc_cont=None, base_kwargs={},
+    )
+    assert result == {}
+
+
+def test_4_9_codim2_search_gh_dispatch_calls_lc_continuation():
+    """A `GH` token in the bifurcation column triggers an LC-style
+    continuation: ``IPS=2, ISW=-1, ICP=[params[0], 11]`` are the canonical
+    auto-07p constants for switching to the LC family from a generalised
+    Hopf point. Pins the GH handler's specific kwargs against the
+    convention.
+    """
+    # Mock: initial 2D continuation returns a summary with one GH row;
+    # the subsequent GH-handler LC continuation returns an empty summary
+    # (no LP-of-cycle on the LC branch — keeps recursion depth shallow).
+    main_summary = pd.DataFrame({
+        'bifurcation': ['GH1'],
+        'eta': [0.5],
+        'Delta': [0.3],
+    })
+    lc_summary = pd.DataFrame({
+        'bifurcation': ['EP'],
+        'eta': [0.6],
+        'Delta': [0.3],
+    })
+    mock = _MockODESystem(
+        run_returns=[
+            (main_summary, 'main_cont'),  # initial 2D continuation
+            (lc_summary, 'gh_lc_cont'),   # GH→LC continuation
+        ],
+        extract_returns={
+            'main_cont': main_summary,
+            'gh_lc_cont': lc_summary,
+        },
+    )
+    result = codim2_search(
+        params=['eta', 'Delta'], starting_points=['HB1'],
+        origin=0, pyauto_instance=mock, max_recursion_depth=1,
+        codim2_types=('GH',),
+    )
+    # Two runs: initial 2D codim-1 + the GH LC continuation.
+    assert len(mock.run_calls) == 2
+    gh_call = mock.run_calls[1]
+    assert gh_call['starting_point'] == 'GH1'
+    assert gh_call['IPS'] == 2 and gh_call['ISW'] == -1
+    assert gh_call['ICP'] == ['eta', 11]
+    # Result registers both continuations.
+    assert len(result) == 2
+
+
+def test_4_10_codim2_search_bt_dispatch_calls_equilibrium_continuation():
+    """A `BT` token triggers a 1D equilibrium continuation in ``params[0]``
+    stopping at ``HB1`` (IPS=1, ISW=1, STOP=['HB1']) — the canonical move
+    from a Bogdanov-Takens point to the Hopf curve emerging from it.
+    The homoclinic curve is deliberately *not* auto-followed; documented
+    in the BT handler's docstring.
+    """
+    main_summary = pd.DataFrame({
+        'bifurcation': ['BT1'],
+        'eta': [0.5],
+        'Delta': [0.3],
+    })
+    bt_eq_summary = pd.DataFrame({
+        'bifurcation': ['EP', 'EP'],  # no HB found — recursion terminates
+        'eta': [0.6, 0.7],
+        'Delta': [0.3, 0.3],
+    })
+    mock = _MockODESystem(
+        run_returns=[
+            (main_summary, 'main_cont'),
+            (bt_eq_summary, 'bt_eq_cont'),
+        ],
+        extract_returns={
+            'main_cont': main_summary,
+            'bt_eq_cont': bt_eq_summary,
+        },
+    )
+    result = codim2_search(
+        params=['eta', 'Delta'], starting_points=['LP1'],
+        origin=0, pyauto_instance=mock, max_recursion_depth=1,
+        codim2_types=('BT',),
+    )
+    assert len(mock.run_calls) == 2
+    bt_call = mock.run_calls[1]
+    assert bt_call['starting_point'] == 'BT1'
+    assert bt_call['IPS'] == 1 and bt_call['ISW'] == 1
+    assert bt_call['ICP'] == 'eta'
+    assert bt_call['STOP'] == ['HB1']
+    # No further Hopf found → BT handler returns just the main run; no
+    # secondary continuation was registered.
+    assert len(result) == 1
+
+
+def test_4_11_codim2_search_gh_run_failure_warns_not_raises():
+    """If the GH LC continuation itself raises inside auto-07p, the failure
+    surfaces as a UserWarning citing the kwargs hook for the user to tune,
+    and the main search continues rather than aborting.
+    """
+    import warnings as _warnings
+
+    main_summary = pd.DataFrame({
+        'bifurcation': ['GH1'],
+        'eta': [0.5],
+        'Delta': [0.3],
+    })
+    mock = _MockODESystem(
+        run_returns=[(main_summary, 'main_cont')],
+        extract_returns={'main_cont': main_summary},
+        run_exception_at=1,  # second .run() call raises
+    )
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        result = codim2_search(
+            params=['eta', 'Delta'], starting_points=['HB1'],
+            origin=0, pyauto_instance=mock, max_recursion_depth=1,
+            codim2_types=('GH',),
+        )
+
+    msgs = [str(w.message) for w in caught]
+    assert any('GH1' in m and 'kwargs_1D_lc_cont' in m for m in msgs), (
+        f"expected GH-failure warning mentioning the user-tunable kwargs hook, "
+        f"got: {msgs}"
+    )
+    # Initial continuation still gets registered.
+    assert len(result) == 1
+
+
+def test_4_12_codim2_search_bt_run_failure_warns_homoclinic_note():
+    """BT run failures surface a UserWarning that explicitly mentions the
+    homoclinic-curve limitation (since users hitting BT failures are the
+    population most likely to ask why). Pins the diagnostic content.
+    """
+    import warnings as _warnings
+
+    main_summary = pd.DataFrame({
+        'bifurcation': ['BT1'],
+        'eta': [0.5],
+        'Delta': [0.3],
+    })
+    mock = _MockODESystem(
+        run_returns=[(main_summary, 'main_cont')],
+        extract_returns={'main_cont': main_summary},
+        run_exception_at=1,
+    )
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        codim2_search(
+            params=['eta', 'Delta'], starting_points=['LP1'],
+            origin=0, pyauto_instance=mock, max_recursion_depth=1,
+            codim2_types=('BT',),
+        )
+
+    msgs = [str(w.message) for w in caught]
+    assert any('BT1' in m and 'homoclinic' in m.lower() for m in msgs), (
+        f"expected BT-failure warning mentioning the homoclinic gap, got: {msgs}"
+    )
+
+
+def test_4_13_codim2_search_codim2_types_filter():
+    """The `codim2_types` filter narrows which codim-2 codes trigger
+    recursion. Pass `('GH',)` and a curve with both GH and BT points
+    should only fire the GH handler.
+    """
+    main_summary = pd.DataFrame({
+        'bifurcation': ['GH1', 'BT1'],
+        'eta': [0.5, 0.6],
+        'Delta': [0.3, 0.4],
+    })
+    lc_summary = pd.DataFrame({
+        'bifurcation': ['EP'],
+        'eta': [0.55],
+        'Delta': [0.3],
+    })
+    mock = _MockODESystem(
+        run_returns=[
+            (main_summary, 'main_cont'),
+            (lc_summary, 'gh_lc_cont'),
+        ],
+        extract_returns={
+            'main_cont': main_summary,
+            'gh_lc_cont': lc_summary,
+        },
+    )
+    result = codim2_search(
+        params=['eta', 'Delta'], starting_points=['HB1'],
+        origin=0, pyauto_instance=mock, max_recursion_depth=1,
+        codim2_types=('GH',),  # BT is excluded
+    )
+    # Only the initial run + the GH branch — BT was not dispatched.
+    assert len(mock.run_calls) == 2
+    assert mock.run_calls[1]['starting_point'] == 'GH1'
+    assert len(result) == 2
