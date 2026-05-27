@@ -1095,7 +1095,10 @@ class ODESystem:
         ax.set_xlabel(x, labelpad=label_pad)
         ax.set_ylabel(y, labelpad=label_pad)
         self._update_axis_lims(ax, ax_data=[x_data, y_data], padding=axislim_pad, force_update=force_axis_lim_update)
-        if bifurcation_legend:
+        # Skip `ax.legend()` when no labeled artists exist — otherwise
+        # matplotlib emits "No artists with labels found to put in legend"
+        # for every continuation that recorded zero bifurcation points.
+        if bifurcation_legend and ax.get_legend_handles_labels()[1]:
             ax.legend()
 
         return line_col
@@ -1212,10 +1215,13 @@ class ODESystem:
             Key of the solution branch.
         points
             List with keys of the solutions for which to create time series plots.
+            When ``None`` (default), every labelled point on the continuation
+            is plotted as a separate trace.
         ax
             Axis in which to plot the data. If not provided, a new figure will be created.
         linespecs
-            Keyword arguments that control the appearance of the line created for each entry in `points`.
+            Per-trace keyword overrides; ``linespecs[i]`` is merged into
+            ``kwargs`` for the i-th point.
         kwargs
             Additional keyword arguments that control the appearance of the plot.
 
@@ -1225,40 +1231,53 @@ class ODESystem:
             Axis object that contains the plotted timeseries.
         """
 
-        # extract information from branch solutions
+        # Resolve `points`. The pre-1.0 `points=None` branch built an N-row
+        # results dict but then iterated `range(len(['RG']))`, silently
+        # dropping all but the first trace; worse, an unpacking-only-works-
+        # for-2-elements bug broke the path entirely. Replaced with an
+        # explicit enumeration of every labelled point on the continuation.
         if not points:
-            points = ['RG']
-            points_tmp = self.results[self._results_map[cont] if type(cont) is str else cont].keys()
-            results_tmp, vmap = [self.extract([var] + ['time'], cont=cont, point=p) for p in points_tmp]
-            results = [{key: [] for key in results_tmp[0].keys()}]
-            for r in results_tmp:
-                for key in r:
-                    results[0][key].append(np.squeeze(r[key]))
-            for key in results[0].keys():
-                results[0][key] = np.asarray(results[0][key]).squeeze()
-        else:
-            results = []
-            vmap = {}
-            for p in points:
-                r, vmap = self.extract([var] + ['time'], cont=cont, point=p)
-                results.append(r)
-        var = vmap[var]
+            cont_key = self._results_map[cont] if isinstance(cont, str) else cont
+            try:
+                stored = self.results[cont_key]
+            except KeyError as exc:
+                raise KeyError(
+                    f"plot_timeseries: continuation {cont!r} not found "
+                    f"in self.results"
+                ) from exc
+            points = list(stored.keys())
+            if not points:
+                raise ValueError(
+                    f"plot_timeseries: continuation {cont!r} has no recorded "
+                    f"points to plot. Pass `points=[...]` explicitly or rerun "
+                    f"the continuation with NPR set so points are labelled."
+                )
+
+        # extract information from branch solutions
+        results = []
+        vmap: dict = {}
+        for p in points:
+            r, vmap = self.extract([var, 'time'], cont=cont, point=p)
+            results.append(r)
+        var_col = vmap[var]
+        time_col = vmap['time']
 
         # create plot
         if ax is None:
-            fig, ax = plt.subplots()
+            _, ax = plt.subplots()
 
         # plot phase trajectory
         if not linespecs:
             linespecs = [dict() for _ in range(len(points))]
         for i in range(len(points)):
-            time = results[i]['time'].squeeze()
-            kwargs_tmp = kwargs.copy()
+            time = np.atleast_1d(results[i][time_col]).squeeze()
+            y = np.atleast_1d(results[i][var_col]).squeeze()
+            kwargs_tmp = dict(kwargs)
             kwargs_tmp.update(linespecs[i])
-            line_col = self._get_line_collection(x=time, y=results[i][var].squeeze(), **kwargs_tmp)
+            line_col = self._get_line_collection(x=time, y=y, **kwargs_tmp)
             ax.add_collection(line_col)
         ax.autoscale()
-        ax.legend(points)
+        ax.legend([str(p) for p in points])
 
         return ax
 
@@ -1303,9 +1322,12 @@ class ODESystem:
             for key, args in custom_bf_styles.items():
                 self.update_bifurcation_style(key, **args)
         bf_styles = self._bifurcation_styles.copy()
-        plt.sca(ax)
 
-        # draw bifurcation points
+        # draw bifurcation points. Pre-1.0 used `plt.sca(ax) + plt.plot`
+        # which silently couples to matplotlib's global "current axes" state
+        # — calling this from a function that itself activates a different
+        # axes would draw on the wrong figure. Routed through `ax.plot`
+        # directly.
         points, labels = ax.get_legend_handles_labels()
         for bf, x, y in zip(solution_types.values, x_vals.values, y_vals.values):
             if bf not in "EPMXRG" and bf not in ignore:
@@ -1315,21 +1337,23 @@ class ODESystem:
                 else:
                     m = default_marker
                     c = default_color
+                # Limit-cycle case: y is a (min, max) pair — draw a marker
+                # on each envelope. Equilibrium case: y is scalar.
                 if y.shape and np.sum(y.shape) > 1:
                     if bf not in labels:
-                        line = plt.plot(x, y.max(), markersize=default_size, marker=m, c=c, label=bf)
+                        line = ax.plot(x, y.max(), markersize=default_size, marker=m, c=c, label=bf)
                         points.append(line[0])
                         labels.append(bf)
                     else:
-                        plt.plot(x, y.max(), markersize=default_size, marker=m, c=c)
-                    plt.plot(x, y.min(), markersize=default_size, marker=m, c=c)
+                        ax.plot(x, y.max(), markersize=default_size, marker=m, c=c)
+                    ax.plot(x, y.min(), markersize=default_size, marker=m, c=c)
                 else:
                     if bf not in labels:
-                        line = plt.plot(x, y, markersize=default_size, marker=m, c=c, label=bf)
+                        line = ax.plot(x, y, markersize=default_size, marker=m, c=c, label=bf)
                         points.append(line[0])
                         labels.append(bf)
                     else:
-                        plt.plot(x, y, markersize=default_size, marker=m, c=c)
+                        ax.plot(x, y, markersize=default_size, marker=m, c=c)
         return points, labels
 
     def update_bifurcation_style(self, bf_type: str, marker: str = None, color: str = None) -> None:
@@ -1608,11 +1632,13 @@ class ODESystem:
         LineCollection
         """
 
-        # combine y and param vals
-        try:
-            x = np.reshape(x, (x.squeeze().shape[0], 1))
-        except IndexError:
-            pass
+        # Combine x and y into segment-friendly (N, 2) arrays. The squeeze-
+        # then-take-shape[0] pattern raises IndexError on degenerate length-1
+        # inputs (the squeezed array is 0-D); a `reshape(-1, 1)` fallback
+        # handles both 1-D-length-1 and N-D-length-1 cases without crashing
+        # the line-collection construction. The pre-1.0 code had this guard
+        # on `x` but not on `y`.
+        x = np.asarray(x).reshape(-1, 1)
         if hasattr(y[0], "shape") and sum(y[0].shape) > 1:
             y = np.asarray([y[i] for i in range(y.shape[0])])
             y_max = np.reshape(y.max(axis=1), (y.shape[0], 1))
@@ -1621,14 +1647,19 @@ class ODESystem:
             y = y_max
             add_min = True
         else:
-            y = np.reshape(y, (y.squeeze().shape[0], 1))
+            y = np.asarray(y).reshape(-1, 1)
             add_min = False
         y = np.append(x, y, axis=1)
 
         # if stability was passed, collect indices for stable line segments
         ###################################################################
 
-        if stability is not None and np.sum(stability.shape) > 1:
+        # The size>1 guard skips the segmentation logic for degenerate
+        # 1-element stability arrays (which would yield a single empty
+        # segment via the diff). The pre-1.0 form used
+        # `np.sum(stability.shape) > 1` — semantically equivalent for 1-D
+        # arrays but cryptic; switched to the explicit `.size > 1`.
+        if stability is not None and np.asarray(stability).size > 1:
 
             # collect indices
             stability = np.asarray(stability, dtype='int')
@@ -1693,7 +1724,7 @@ class ODESystem:
         # if stability was passed, collect indices for stable line segments
         ###################################################################
 
-        if stability is not None and np.sum(stability.shape) > 1:
+        if stability is not None and np.asarray(stability).size > 1:
 
             # collect indices
             stability = np.asarray(stability, dtype='int')

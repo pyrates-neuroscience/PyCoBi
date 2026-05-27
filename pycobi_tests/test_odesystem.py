@@ -1485,6 +1485,185 @@ def test_4_12_codim2_search_bt_run_failure_warns_homoclinic_note():
     )
 
 
+# ----------------------------------------------------------------------------
+# Visualization bug fixes — Section 5
+# ----------------------------------------------------------------------------
+
+
+def test_5_1_get_line_collection_single_point_stability():
+    """`_get_line_collection` tolerates a length-1 stability array.
+
+    Pre-1.0 used ``np.sum(stability.shape) > 1`` — equivalent for >1-element
+    arrays but cryptic. The renamed ``.size > 1`` form makes the intent
+    explicit, and the no-stability fallback still kicks in for size-1
+    arrays (segmentation needs at least 2 points).
+    """
+    import matplotlib
+    matplotlib.use('Agg')  # headless safe
+    n = 1
+    x = np.array([0.0])
+    y = np.array([1.0])
+    stab = np.array([True])
+    lc = ODESystem._get_line_collection(x=x, y=y, stability=stab)
+    assert lc is not None  # primary smoke test: no IndexError/ValueError
+
+
+def test_5_2_plot_continuation_no_empty_legend_warning(auto_dir):
+    """`plot_continuation` skips `ax.legend()` when no labeled artists exist.
+
+    Pre-1.0 the call was unconditional, so matplotlib emitted "No artists
+    with labels found to put in legend" for every continuation that didn't
+    cross a special point inside the run range — noise that easily
+    obscured real warnings.
+
+    QIF init_cont=True produces a converged-EP IVP whose summary contains
+    only ``'EP'`` rows; ``plot_bifurcation_points`` ignores ``EP`` so no
+    labeled markers are drawn — exactly the regression case.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+    import warnings as _warnings
+
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=20, NPR=20,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        fig, ax = _plt.subplots()
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            ode.plot_continuation('t', 'r', cont=0, ax=ax)
+        # No "No artists with labels" warning, and no legend was created.
+        labels_msgs = [str(w.message) for w in caught
+                       if 'artists with labels' in str(w.message)]
+        assert not labels_msgs, (
+            f"unexpected empty-legend warning: {labels_msgs}"
+        )
+        assert ax.get_legend() is None
+        _plt.close(fig)
+    finally:
+        ode.close_session()
+
+
+def test_5_3_plot_timeseries_points_none_uses_all_labelled_points():
+    """`plot_timeseries(points=None)` plots one trace per labelled point on
+    the continuation, not just the first.
+
+    Pre-1.0 the `points=None` branch set ``points = ['RG']`` then iterated
+    ``range(len(points)) == range(1)``, silently dropping every trace past
+    the first. (Worse: an unpacking-only-works-for-2-elements bug aliased
+    `vmap` to a result tuple instead of a dict and broke the path
+    outright.) Pinned via a stub continuation populated by hand so we can
+    drive the function without auto-07p.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+
+    # Build a minimal ODESystem-like object that responds to
+    # `_results_map`, `results`, and `extract`. We don't construct a real
+    # one because that would need an auto run.
+    class _Stub(ODESystem):
+        def __init__(self):
+            # bypass real __init__ — populate only the slots we touch
+            self.results = {0: {1: 'p1', 2: 'p2', 3: 'p3'}}
+            self._results_map = {'cont0': 0}
+            # `extract` reads these — give them just enough shape
+            self._var_map = {}
+            self._var_map_inv = {}
+
+        def extract(self, keys, cont, point=None):
+            # synthetic: time is a 5-point ramp, var is a sine wave shifted
+            # per-point so we can verify each trace got its own data.
+            t = np.linspace(0.0, 1.0, 5)
+            offset = {1: 0.0, 2: 1.0, 3: 2.0}[point]
+            return ({'r': np.sin(2 * np.pi * t) + offset, 'time': t},
+                    {'r': 'r', 'time': 'time'})
+
+    stub = _Stub()
+    fig, ax = _plt.subplots()
+    out_ax = stub.plot_timeseries('r', cont='cont0', ax=ax)
+    # Three traces correspond to the three labelled points.
+    assert len(ax.collections) == 3, (
+        f"expected one LineCollection per labelled point (3), "
+        f"got {len(ax.collections)}"
+    )
+    # Legend shows the point keys, not the placeholder 'RG'.
+    legend = ax.get_legend()
+    assert legend is not None
+    legend_texts = [t.get_text() for t in legend.get_texts()]
+    assert legend_texts == ['1', '2', '3'], (
+        f"expected legend ['1','2','3'], got {legend_texts}"
+    )
+    _plt.close(fig)
+
+
+def test_5_4_plot_timeseries_empty_continuation_errors_helpfully():
+    """`plot_timeseries(points=None)` on a continuation with zero labelled
+    points raises a clear ValueError that points the user at NPR / explicit
+    `points=` rather than crashing inside extract.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+
+    class _EmptyStub(ODESystem):
+        def __init__(self):
+            self.results = {0: {}}
+            self._results_map = {'empty': 0}
+            self._var_map = {}
+            self._var_map_inv = {}
+
+    stub = _EmptyStub()
+    with raises(ValueError, match=r"no recorded points"):
+        stub.plot_timeseries('r', cont='empty')
+
+
+def test_5_5_plot_bifurcation_points_routes_to_supplied_axes():
+    """`plot_bifurcation_points` draws on the axis it was given, not on
+    matplotlib's "current axes". Pre-1.0 used ``plt.sca(ax) + plt.plot``
+    which mutates global state and renders incorrectly if the caller is
+    juggling multiple axes (e.g. a faceted figure).
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+    import pandas as _pd
+
+    fig, axes = _plt.subplots(1, 2)
+    target, other = axes
+    # Make `other` the "current axes" via plt.sca — the pre-1.0 path would
+    # have drawn on `other` even though `target` was passed in.
+    _plt.sca(other)
+
+    class _StubBF(ODESystem):
+        def __init__(self):
+            self._bifurcation_styles = {
+                'LP': {'marker': 'v', 'color': 'k'},
+                'HB': {'marker': 'o', 'color': 'g'},
+            }
+
+    stub = _StubBF()
+    types = _pd.Series(['LP', 'HB'])
+    xs = _pd.Series([0.1, 0.5])
+    ys = _pd.Series([1.0, 2.0])
+    stub.plot_bifurcation_points(types, xs, ys, ax=target)
+
+    # `target` should have 2 lines drawn on it; `other` should be empty.
+    assert len(target.lines) == 2, (
+        f"expected 2 markers on target axes, got {len(target.lines)}"
+    )
+    assert len(other.lines) == 0, (
+        f"target-axes routing leaked to current axes; other has "
+        f"{len(other.lines)} lines"
+    )
+    _plt.close(fig)
+
+
 def test_4_13_codim2_search_codim2_types_filter():
     """The `codim2_types` filter narrows which codim-2 codes trigger
     recursion. Pass `('GH',)` and a curve with both GH and BT points
