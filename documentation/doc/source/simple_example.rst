@@ -55,28 +55,35 @@ The QIF mean-field model comes pre-implemented with `PyRates`, so we can simply 
     # installation directory of auto-07p
     auto_dir = "~/projects/auto-07p"
 
-    # ODESystem initialization
-    ode = ODESystem.from_yaml(model, auto_dir=auto_dir)
+    # ODESystem initialization: pass `init_cont=True` to run an initial
+    # time-integration ("IVP") at instantiation, which is what most
+    # equilibrium-continuation workflows want — see note below.
+    ode = ODESystem.from_yaml(model, auto_dir=auto_dir, init_cont=True)
 
 If you haven't manually configured your system environment variables such that the Python installation of `auto-07p` is
 recognized by your Python interpreter, you can simply add the installation directory of `auto-07p` to the :code:`ODESystem` instantiation
 (as above) and it will take care of these environment variables for you.
-During the initialization of :code:`ODESystem`, an integration of the QIF model over time is automatically performed in
-order to ensure that the system converged to a steady-state.
-This is done, because it is required for parameter continuations that the model converged to an
-`equilibrium solution <http://www.scholarpedia.org/article/Equilibrium>`_, i.e. that
-:math:`\dot r = 0` and :math:`\dot v = 0` in our example.
+With :code:`init_cont=True`, an integration of the QIF model over time is automatically performed during
+initialization to ensure that the system converged to a steady-state. This is required for equilibrium-style
+parameter continuations: the starting point must be an
+`equilibrium solution <http://www.scholarpedia.org/article/Equilibrium>`_, i.e. :math:`\dot r = 0` and
+:math:`\dot v = 0` in our example. Since `PyCoBi >= 0.10.0` the IVP is **opt-in** — if you already have a
+converged state (e.g. from a hand-written `c.eq` file or a previous run loaded via :code:`ODESystem.from_file`),
+leave :code:`init_cont=False` (the default) and skip the IVP.
+
 You can check whether the system indeed converged to a steady-state solution by plotting the results of the time integration:
 
 .. code-block::
 
-    ode.plot_continuation("PAR(14)", "U(1)", cont=0)
+    ode.plot_continuation("t", "p/qif_op/r", cont=0)
     plt.show()
 
-The above code plots the first state variable :math:`r` (corresponding to :code:`"U(1)"`) against time (corresponding to :code:`"PAR(14)"`).
-Alternatively, you can look at the auto-07p output in the terminal, where you will see that the values for :code:`U(1)` and :code:`U(2)`
-converged to certain values. These two values represent the values of our state variables :math:`r` and
-:math:`v` for the steady-state solution that the QIF system converged to.
+The above code plots the first state variable :math:`r` against time. The column name :code:`"p/qif_op/r"` is the
+namespaced PyRates identifier — `PyRates >= 1.1` also writes auto-07p :code:`unames` / :code:`parnames` into the
+generated :code:`c.*` files so the column is additionally available under its bare local name :code:`"r"`. The
+auto-07p-native :code:`"U(1)"` form continues to work too. Alternatively, you can look at the auto-07p output in the
+terminal, where the values of :code:`U(1)` and :code:`U(2)` converge to specific numbers — these are the
+steady-state values of :math:`r` and :math:`v` the QIF system converged to.
 
 Part 2: Performing Parameter Continuations
 ------------------------------------------
@@ -88,10 +95,10 @@ interest: :math:`\bar \eta`. We can do this via the :code:`ODESystem.run` method
 .. code-block::
 
     eta_sols, eta_cont = ode.run(
-        origin=0, starting_point='EP1', name='eta', bidirectional=True,
+        origin=0, starting_point='EP2', name='eta', bidirectional=True,
         ICP=4, RL0=-20.0, RL1=20.0, IPS=1, ILP=1, ISP=2, ISW=1, NTST=400,
         NCOL=4, IAD=3, IPLT=0, NBC=0, NINT=0, NMX=2000, NPR=10, MXBF=5, IID=2,
-        ITMX=40, ITNW=40, NWTN=12, JAC=0, EPSL=1e-06, EPSU=1e-06, EPSS=1e-04,
+        ITMX=40, ITNW=40, NWTN=12, EPSL=1e-06, EPSU=1e-06, EPSS=1e-04,
         DS=1e-4, DSMIN=1e-8, DSMAX=5e-2, IADS=1, THL={}, THU={}, UZR={}, STOP={}
     )
 
@@ -100,6 +107,16 @@ most of them. It is common practice to specify most of them in constants files t
 via the keyword argument :code:`c=name`. In such a case, you would specify all auto-07p
 constants that do not change between calls to the :code:`.run()` method in a file with the name *c.name* and only
 provide the constants that need to be altered between :code:`.run()` calls directly to the :code:`.run()` method.
+
+Note that we use :code:`starting_point='EP2'` rather than :code:`'EP1'` — the IVP that ran when we instantiated the
+:code:`ODESystem` produced two labeled solutions: :code:`'EP1'` is the :math:`t = 0` initial condition, while
+:code:`'EP2'` is the converged steady state. Equilibrium continuations want the latter.
+
+We did not pass a :code:`JAC=...` value here because :code:`from_yaml` defaults to :code:`analytical_jacobian=True`,
+which instructs `PyRates` to symbolically differentiate the vector field and write a DFDU/DFDP block into the
+generated Fortran. The generated :code:`c.*` file then sets :code:`JAC=1` so auto-07p picks up the analytical
+Jacobian — usually faster and more accurate than the default finite-difference fallback. Pass
+:code:`analytical_jacobian=False` at instantiation, or :code:`JAC=0` on the per-call :code:`run()`, to opt out.
 
 Checking the terminal output of auto-07p, you will realize that the output in column *TY* shows *LP* for two of the
 solutions we computed along our branch in :math:`\bar\eta`. These indicate the detection of *limit point* or

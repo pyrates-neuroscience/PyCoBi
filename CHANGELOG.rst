@@ -1,6 +1,102 @@
 Changelog
 =========
 
+0.10
+----
+
+0.10.0 (unreleased)
+~~~~~~~~~~~~~~~~~~~
+
+A larger maintenance / API-tightening release. Headline change: PyCoBi now
+surfaces PyRates' symbolic-Jacobian generation, multi-scenario c.* files, and
+unames/parnames so DFDU/DFDP entries land in the generated Fortran and
+auto-07p uses the analytical Jacobian by default.
+
+Behaviour changes (be aware on upgrade)
+'''''''''''''''''''''''''''''''''''''''
+
+- :code:`init_cont` now defaults to :code:`False` on :code:`ODESystem.__init__`,
+  :code:`ODESystem.from_yaml`, and :code:`ODESystem.from_template`. Set
+  :code:`init_cont=True` explicitly to opt into the legacy automatic-IVP
+  behaviour (typical for equilibrium-continuation workflows that need a
+  converged starting point).
+
+New features
+''''''''''''
+
+- :code:`analytical_jacobian: bool = True` named parameter on
+  :code:`from_yaml` / :code:`from_template` forwards as PyRates' :code:`auto_jac`;
+  the generated c.* file sets :code:`JAC=1` and DFDU/DFDP blocks are emitted in
+  :code:`func`. Override per-call via :code:`JAC=0`/:code:`JAC=1` on :code:`run()`.
+- :code:`auto_constants` (string or iterable, default :code:`('ivp',)`) on
+  :code:`from_yaml` / :code:`from_template` exposes PyRates' multi-scenario c.*
+  generation — request :code:`('ivp', 'eq', 'lc', 'bvp')` to set up all four
+  scenarios at once and switch between them at run-time via :code:`run(c=...)`.
+- :code:`Continuation` dataclass and :code:`ODESystem.get_continuation(key_or_name)`
+  provide a single typed view over per-continuation state. The four legacy mirror
+  dicts (:code:`auto_solutions`, :code:`results`, :code:`_results_map`,
+  :code:`_branches`) keep working unchanged for backward-compatible reads.
+- :code:`parse_point_diagnostics(s, diag=None)` exposes the per-point diagnostic
+  parser (one-shot regex; returns :code:`{stable, eigenvalues, text}`).
+- :code:`_map_auto_kwargs` now remaps named PAR keys to integers for
+  :code:`UZSTOP`, :code:`THL`, and :code:`THU` in addition to :code:`ICP` and
+  :code:`UZR`.
+
+Bug fixes
+'''''''''
+
+- :code:`to_file` opened the pickle in text mode (:code:`'x'`) — first call
+  always raised :code:`TypeError` and silently fell into the binary fallback.
+  Now uses :code:`'xb'` / :code:`'wb'` via context managers, and
+  :code:`from_file` reconstructs the new :code:`continuations` store from the
+  mirror dicts on load (handles non-dict slots too).
+- :code:`continue_period_doubling_bf` had a mutable default :code:`pds: list = []`
+  that was shared across calls — replaced with :code:`pds=None` plus in-body
+  initialisation.
+- :code:`codim2_search` and :code:`continue_period_doubling_bf` iterated
+  :code:`for bf, p1, p2 in <DataFrame>:` which actually iterates *column labels*
+  — switched to :code:`.itertuples(index=False, name=None)` so the automated
+  codim-2 / PD-cascade machinery actually runs over rows.
+- :code:`_create_summary` was appending the whole eigenvalue list per
+  eigenvalue column rather than the scalar value; now stores scalars.
+- :code:`Line3DCollection(segments=lines, ...)` was outright broken on current
+  matplotlib (the 3D constructor takes :code:`lines` positionally). Fixed.
+- :code:`_get_line_collection` and :code:`_get_3d_line_collection` now pop
+  :code:`linestyles` from :code:`**kwargs` so user-supplied overrides don't
+  collide with the per-segment styles the function computes.
+- :code:`_start_from_solution`'s silent second :code:`auto.run` retry now
+  emits a :code:`UserWarning` so callers know the original :code:`run()`
+  kwargs were dropped on the retry.
+
+Internal refactors
+''''''''''''''''''
+
+- Centralised continuation bookkeeping in :code:`_register_continuation` and
+  :code:`_record_summary`; the scattered writes that used to live in
+  :code:`run()` / :code:`merge()` now happen in one place.
+- Bidirectional continuation no longer uses the magic-string sentinel
+  :code:`name == 'bidirect:cont2'` for re-entry detection — replaced with a
+  private :code:`_reverse_direction` kwarg.
+- Replaced the regex-fragile token-search in :code:`get_solution_eigenvalues`
+  with a one-shot regex (:code:`parse_point_diagnostics`). The same parsed
+  dict is reused for stability / eigenvalues / lyapunov within one summary
+  build (was up to 3 redundant text walks per point).
+- Reworked :code:`get_branch_info`'s magic-10 retry loop into explicit
+  iteration with a clear error message naming every label index that was
+  tried.
+- :code:`_create_summary` no longer builds two parallel
+  :code:`data_1d` / :code:`data_2d` structures and then merges them — a
+  single :code:`dict[(name, sub_index), list]` produces the final
+  :code:`MultiIndex` DataFrame in one shot. :code:`_to_dataframe` is removed.
+- :code:`__getitem__` raises with a helpful :code:`KeyError` listing every
+  registered name and stored key on a double-miss.
+- :code:`ODESystem.blocked_indices` is now imported from PyRates'
+  :code:`FortranBackend._AUTO_BLOCKED_PAR_RANGE` with a hard-coded
+  :code:`(10, 15)` fallback — single source of truth.
+- :code:`from_template` filters non-parameter args
+  (:code:`{'t', 'y', 'dy', 'hist'}`) by name rather than slicing by position
+  — robust against DDE models (where :code:`hist` shifts the offset).
+
 0.9
 ---
 

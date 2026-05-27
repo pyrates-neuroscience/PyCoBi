@@ -744,6 +744,126 @@ def test_2_1_jacobian_parity(auto_dir, tmp_path):
     )
 
 
+def test_1_13_starting_point_chaining(auto_dir):
+    """Continuations can be chained: a fresh `run()` call started from a labeled
+    point on a previous continuation registers as a new entry in `continuations`
+    without disturbing the origin's entry.
+
+    The chain here is:
+      (0) IVP → (1) equilibrium continuation in eta with a fold at LP1 →
+      (2) 2-parameter continuation of that fold curve in (eta, I_ext).
+    """
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=500, NPR=500,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        # 1D equilibrium continuation in eta from the IVP's converged EP2.
+        sols_a, _ = ode.run(
+            starting_point='EP2', name='eta_a', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=30, NPR=1, DS=0.05, DSMAX=0.5,
+        )
+        assert set(ode.continuations.keys()) == {0, 1}
+        eta_a = ode.get_continuation('eta_a')
+        assert eta_a.icps == [(4,)]  # eta is PAR(4) by PyCoBi's param ordering
+        assert 'LP' in list(sols_a['bifurcation'].values.ravel()), \
+            "expected an LP on the equilibrium curve to chain from"
+
+        # Chain: start a new continuation from the LP, switch to 2-parameter
+        # continuation of the LP curve in (eta, I_ext).
+        sols_b, _ = ode.run(
+            origin='eta_a', starting_point='LP1', name='lp_curve',
+            ICP=['eta', 'I_ext'],
+            IPS=1, ILP=0, ISP=2, ISW=2, NMX=20, NPR=1, DS=0.05, DSMAX=0.5,
+        )
+        # A fresh entry is added; the origin's entry stays put.
+        assert set(ode.continuations.keys()) == {0, 1, 2}
+        assert ode.get_continuation('eta_a') is eta_a
+        lp_curve = ode.get_continuation('lp_curve')
+        assert lp_curve.name == 'lp_curve'
+        assert lp_curve.summary is sols_b
+        # 2-param continuation records the ICP tuple as it was passed
+        # (PyCoBi resolves names 'eta' and 'I_ext' to ints 4 and 3).
+        assert lp_curve.icps == [(4, 3)]
+        # And the summary has both PAR columns
+        col_names = {c[0] for c in sols_b.columns}
+        assert 'eta' in col_names
+        assert 'I_ext' in col_names
+    finally:
+        ode.close_session()
+
+
+@_requires_pyrates_dev
+def test_1_14_limit_cycle_summary(auto_dir, tmp_path):
+    """Limit-cycle continuation (`IPS=2`) produces a summary with the
+    LC-specific column shape:
+
+      - state-variable columns get integer sub-indices for min / max envelopes,
+        i.e. ``('r', 0)`` and ``('r', 1)`` rather than the equilibrium-form
+        ``('r', 0)`` alone;
+      - the ``period`` column is populated when ``get_period=True`` (one value
+        per labeled point, all positive).
+
+    Uses PyRates' QIF + spike-frequency-adaptation model, which carries a
+    Hopf bifurcation in eta — so the test needs the dev-PyRates features.
+    """
+    model = "model_templates.neural_mass_models.qif.qif_sfa"
+    ode = ODESystem.from_yaml(
+        model, working_dir=str(tmp_path), auto_dir=auto_dir,
+        file_name='qif_sfa_lc_mod', func_name='qif_sfa_lc',
+        # The SFA system has a slow timescale (tau_a=10); the IVP needs
+        # NMX≈30000 steps at the default dt=1e-3 to reach the steady state.
+        init_cont=True, NMX=30000, NPR=30000,
+        # Same parameter regime as the qif_sfa use-example — known to carry
+        # a sub-critical Hopf around eta ≈ 4.
+        node_vars={'p/qif_sfa_op/Delta': 2.0,
+                   'p/qif_sfa_op/alpha': 1.0,
+                   'p/qif_sfa_op/eta': 3.0},
+        edge_vars=[('p/qif_sfa_op/r', 'p/qif_sfa_op/r_in',
+                    {'weight': 15.0 * np.sqrt(2.0)})],
+    )
+    try:
+        # 1D equilibrium continuation in eta from the IVP's converged state
+        # (EP2 = the last EP on the IVP branch; EP1 is the t=0 initial point).
+        eta_sols, _ = ode.run(
+            origin=0, starting_point='EP2', name='eta', bidirectional=True,
+            ICP='eta', IPS=1, ILP=1, ISP=2,
+            NMX=500, NPR=50, DS=1e-3, DSMIN=1e-8, DSMAX=5e-2,
+            ITNW=20, NWTN=10, JAC=0,
+        )
+        bifs_eta = list(eta_sols['bifurcation'].values.ravel())
+        assert 'HB' in bifs_eta, (
+            f"expected at least one Hopf on the eta branch; got bifurcations {bifs_eta}"
+        )
+
+        # Branch-switch to the periodic-solution branch at the Hopf. IPS=2
+        # tells auto to continue limit cycles; ISW=-1 starts from a HB.
+        lc_sols, _ = ode.run(
+            origin='eta', starting_point='HB1', name='lc',
+            IPS=2, ISP=2, ISW=-1, NTST=50, NMX=30, NPR=1,
+            DS=1e-3, DSMAX=0.5,
+            get_period=True,
+            JAC=0,
+        )
+
+        # --- LC-specific column shape ---
+        col_tuples = list(lc_sols.columns)
+        # Period column should be present with positive values
+        assert ('period', '') in col_tuples
+        periods = np.asarray(lc_sols[('period', '')].values).squeeze()
+        assert (periods > 0).all(), f"expected positive periods, got {periods}"
+        # State-var columns appear with min/max sub-indices: PyCoBi packs
+        # each limit cycle into ('var', 0) and ('var', 1).
+        r_subs = sorted(c[1] for c in col_tuples if c[0] == 'r')
+        assert r_subs == [0, 1], f"expected r min/max sub-indices, got {r_subs}"
+    finally:
+        ode.close_session(clear_files=True)
+
+
 @_requires_pyrates_dev
 def test_3_1_pycobi_vs_auto_ops(auto_dir, tmp_path):
     """End-to-end parity vs auto-07p's own analytical-Jacobian demo.

@@ -1,0 +1,36 @@
+%YAML 1.2
+---
+
+# FitzHugh-Nagumo model — a 2D ODE with a cubic nonlinearity, classic
+# textbook system for demonstrating Hopf bifurcations + limit cycles.
+#
+#   v' = v - v^3/3 - w + Iext
+#   w' = epsilon * (v + a - b*w)
+#
+# v is the membrane potential, w is a slow recovery variable, and Iext is the
+# applied current — the typical bifurcation parameter. For 0.34 < Iext < 1.40
+# (with the standard parameter regime below) the steady state is unstable
+# and a stable limit cycle exists, bounded by two Hopf bifurcations.
+
+fhn_op:
+  base: OperatorTemplate
+  equations:
+    - "v' = v - v^3/3 - w + Iext"
+    - "w' = epsilon*(v + a - b*w)"
+  variables:
+    v: output(-1.5)
+    w: variable(-0.5)
+    Iext: 0.0
+    a: 0.7
+    b: 0.8
+    epsilon: 0.08
+
+fhn_pop:
+  base: NodeTemplate
+  operators:
+    - fhn_op
+
+fhn:
+  base: CircuitTemplate
+  nodes:
+    p: fhn_pop

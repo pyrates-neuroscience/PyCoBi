@@ -49,14 +49,15 @@ ode = ODESystem.from_yaml(
     "model_templates.neural_mass_models.qif.qif_sfa", auto_dir="~/PycharmProjects/auto-07p",
     node_vars={'p/qif_sfa_op/Delta': 2.0, 'p/qif_sfa_op/alpha': 1.0, 'p/qif_sfa_op/eta': 3.0},
     edge_vars=[('p/qif_sfa_op/r', 'p/qif_sfa_op/r_in', {'weight': 15.0*np.sqrt(2.0)})],
-    NPR=100, NMX=30000
+    init_cont=True, NPR=100, NMX=30000
 )
 
 # %%
 # In the code above, we adjusted some default parameters of the model in accordance with the parameters reported
-# in [1]_. Also, an initial integration of the ODE system with respect to time was performed, such that the system
-# was able to converge to a steady-state solution. Let's examine whether the system did indeed converge to a
-# steady-state solution.
+# in [1]_. We also passed :code:`init_cont=True` so an initial time integration ("IVP") runs at instantiation and
+# the system converges to a steady state — required as a starting point for an equilibrium continuation.
+# (Since `PyCoBi >= 0.10.0` the IVP is opt-in; the default is :code:`init_cont=False`.) Let's examine whether
+# the system did indeed converge to a steady-state solution.
 
 import matplotlib.pyplot as plt
 ode.plot_continuation("t", "p/qif_sfa_op/r", cont=0)

@@ -49,18 +49,18 @@ import matplotlib.pyplot as plt
 # The IK mean-field model comes pre-implemented with `PyRates`, so we can simply point to the ready-to-use `YAML` definition file.
 
 model = "model_templates.neural_mass_models.ik.ik_theta"
-ode = ODESystem.from_yaml(model, auto_dir="~/PycharmProjects/auto-07p", NMX=10000, DSMAX=0.1,
+ode = ODESystem.from_yaml(model, auto_dir="~/PycharmProjects/auto-07p",
+                          init_cont=True, NMX=10000, DSMAX=0.1,
                           node_vars={"p/ik_theta_op/Delta": 0.1, "p/ik_theta_op/g": 20.0, "p/ik_theta_op/d": 0.0})
 
 # %%
 # If you haven't manually configured your system environment variables such that the Python installation of `auto-07p` is
 # recognized by your Python interpreter, you can simply add the installation directory of `auto-07p` to the :code:`ODESystem` instantiation
 # (as above) and it will take care of these environment variables for you.
-# During the initialization of :code:`ODESystem`, an integration of the IK model over time is automatically performed in
-# order to ensure that the system converged to a steady-state.
-# This is done, because it is required for parameter continuations that the model converged to an
-# `equilibrium solution <http://www.scholarpedia.org/article/Equilibrium>`_, i.e. that
-# :math:`\dot r = 0`, :math:`\dot v = 0`, and :math:`\dot u = 0` in our example.
+# Passing :code:`init_cont=True` requests an initial time integration ("IVP") at instantiation so the system
+# converges to a steady state — required as a starting point for the equilibrium continuation below
+# (:math:`\dot r = 0`, :math:`\dot v = 0`, and :math:`\dot u = 0` for the IK model). Since `PyCoBi >= 0.10.0`
+# the IVP is opt-in (default :code:`init_cont=False`).
 # The keyword arguments :code:`NMX` and :code:`DSMAX` control the maximum number of integration steps and maximum
 # integration step-size, respectively. Finally, the argument :code:`node_vars` allows you to change some of the model parameters
 # before the start of the continuation, to start in a desirable dynamic regime.
