@@ -1104,7 +1104,8 @@ class ODESystem:
         return line_col
 
     def plot_trajectory(self, variables: Union[list, tuple], cont: Union[Any, str, int], point: Union[str, int] = None,
-                        ax: plt.Axes = None, force_axis_lim_update: bool = False, cutoff: float = None, **kwargs
+                        ax: plt.Axes = None, force_axis_lim_update: bool = False, cutoff: float = None,
+                        colorbar: bool = False, colorbar_label: str = None, **kwargs
                         ) -> LineCollection:
         """Plot trajectory of state variables through phase space over time.
 
@@ -1122,6 +1123,16 @@ class ODESystem:
             If true, the axis limits of x and y-axis will be updated after creating the line plots.
         cutoff
             Initial time to be disregarded for plotting.
+        colorbar
+            For 3D plots only: if true, attach a colorbar to the figure showing the
+            scalar that ``_get_3d_line_collection`` mapped onto the LineCollection's
+            color (default: the projected x-axis variable). Useful when the
+            colour gradient already encodes time or a state variable. Ignored
+            for 2D plots.
+        colorbar_label
+            Label for the colorbar. Defaults to the array key
+            (``'x'`` / ``'y'`` / ``'z'`` — whichever the LineCollection's
+            ``array=`` kwarg points at).
         kwargs
             Additional keyword arguments that allow to control the appearance of the line plot.
 
@@ -1185,6 +1196,10 @@ class ODESystem:
 
             # plot phase trajectory
             x, y, z = results[variables[0]], results[variables[1]], results[variables[2]]
+            # `array=` controls which projected coordinate the LineCollection's
+            # color map encodes; capture it before _get_3d_line_collection pops
+            # it from kwargs so we can label the colorbar correctly.
+            array_key = kwargs.get('array', 'x')
             line_col = self._get_3d_line_collection(x=x, y=y, z=z, stability=results['stability'], **kwargs)
             ax.add_collection3d(line_col)
             ax.autoscale()
@@ -1195,6 +1210,15 @@ class ODESystem:
             ax.set_ylabel(variables[1], labelpad=label_pad)
             ax.set_zlabel(variables[2], labelpad=label_pad)
             self._update_axis_lims(ax, [x, y, z], padding=axislim_pad, force_update=force_axis_lim_update)
+
+            if colorbar:
+                # Resolve the array-key string to the user-facing variable
+                # name for a sensible default colorbar label.
+                array_to_label = {
+                    'x': variables[0], 'y': variables[1], 'z': variables[2],
+                }
+                label = colorbar_label or array_to_label.get(array_key, array_key)
+                ax.figure.colorbar(line_col, ax=ax, label=label, shrink=0.7)
 
         else:
 
@@ -1355,6 +1379,95 @@ class ODESystem:
                     else:
                         ax.plot(x, y, markersize=default_size, marker=m, c=c)
         return points, labels
+
+    def plot_continuation_grid(self, plots: list, ncols: int = 2, figsize: tuple = None,
+                                sharex: bool = False, sharey: bool = False,
+                                **shared_kwargs) -> tuple:
+        """Lay out multiple 1D/2D continuations as a grid of subplots.
+
+        Convenience helper to compare continuations side-by-side (e.g. a
+        codim-1 scan in eta next to its codim-2 fold curve in (eta, Delta),
+        or several "same x/y, different parameter setting" diagrams).
+
+        Parameters
+        ----------
+        plots
+            List of dicts, one per subplot. Each dict must contain
+            ``'x'``, ``'y'``, and ``'cont'`` (forwarded to
+            :meth:`plot_continuation` as the corresponding positional
+            args). Any additional keys override ``shared_kwargs`` for that
+            specific subplot — except ``'title'``, which is set on the
+            subplot's axes via ``ax.set_title``. The optional
+            ``'panel_label'`` key is drawn in the upper-left corner of
+            the subplot (useful for figure-quality (a), (b), (c)
+            annotations).
+        ncols
+            Number of columns in the grid. Rows are derived from
+            ``ceil(len(plots) / ncols)``. Default 2.
+        figsize
+            Forwarded to :func:`matplotlib.pyplot.subplots`. Defaults to
+            ``(5 * ncols, 4 * nrows)`` — i.e. each subplot gets ~5x4 inches.
+        sharex, sharey
+            Forwarded to :func:`matplotlib.pyplot.subplots`. Useful when
+            all panels live on the same parameter range.
+        shared_kwargs
+            Keyword arguments applied to every subplot (e.g.
+            ``bifurcation_legend=False`` to suppress the per-panel
+            legend). Per-plot keys override these.
+
+        Returns
+        -------
+        tuple
+            ``(fig, axes, line_cols)``. ``axes`` is the flat list of
+            ``Axes`` (length ``len(plots)``; trailing positions in the
+            grid that have no plot are deleted). ``line_cols`` is the
+            list of LineCollections returned by each ``plot_continuation``
+            call, in the same order as ``plots``.
+        """
+        if not plots:
+            raise ValueError("plot_continuation_grid requires at least one plot spec")
+
+        n = len(plots)
+        nrows = (n + ncols - 1) // ncols  # ceil(n / ncols)
+        if figsize is None:
+            figsize = (5 * ncols, 4 * nrows)
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize,
+                                 sharex=sharex, sharey=sharey, squeeze=False)
+        axes_flat = list(axes.flatten())
+
+        line_cols = []
+        for i, spec in enumerate(plots):
+            spec = dict(spec)
+            title = spec.pop('title', None)
+            panel_label = spec.pop('panel_label', None)
+            x = spec.pop('x')
+            y = spec.pop('y')
+            cont = spec.pop('cont')
+
+            # per-plot spec overrides the shared defaults
+            kwargs_tmp = dict(shared_kwargs)
+            kwargs_tmp.update(spec)
+
+            ax = axes_flat[i]
+            line_col = self.plot_continuation(x=x, y=y, cont=cont, ax=ax, **kwargs_tmp)
+            line_cols.append(line_col)
+
+            if title is not None:
+                ax.set_title(title)
+            if panel_label is not None:
+                # axes-fraction text in the upper-left, bold, slightly
+                # larger than the tick labels — matches the convention
+                # used in most published bifurcation figures.
+                ax.text(0.02, 0.96, panel_label, transform=ax.transAxes,
+                        ha='left', va='top', fontweight='bold', fontsize='large')
+
+        # Hide any trailing subplot positions we didn't use.
+        for j in range(n, len(axes_flat)):
+            fig.delaxes(axes_flat[j])
+
+        fig.tight_layout()
+        return fig, axes_flat[:n], line_cols
 
     def update_bifurcation_style(self, bf_type: str, marker: str = None, color: str = None) -> None:
         """Update the default marker and color of a given special solution type.
@@ -1613,7 +1726,7 @@ class ODESystem:
 
     @staticmethod
     def _get_line_collection(x, y, stability=None, line_style_stable='solid', line_style_unstable='dotted',
-                             line_color_stable='k', line_color_unstable='k', **kwargs) -> LineCollection:
+                             line_color_stable='k', line_color_unstable='gray', **kwargs) -> LineCollection:
         """
 
         Parameters

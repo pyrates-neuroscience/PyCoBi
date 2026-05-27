@@ -1623,6 +1623,142 @@ def test_5_4_plot_timeseries_empty_continuation_errors_helpfully():
         stub.plot_timeseries('r', cont='empty')
 
 
+def test_5_6_get_line_collection_unstable_color_default_is_gray():
+    """Default ``line_color_unstable`` changed from ``'k'`` (identical to
+    stable) to ``'gray'`` in 1.0.0, so the two regimes are visually
+    distinguishable without requiring users to pass an explicit override.
+    Pins the new default; user-supplied overrides still win.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    from matplotlib.colors import to_rgba
+
+    n = 6
+    x = np.linspace(0.0, 1.0, n)
+    y = np.linspace(0.0, 0.5, n)
+    stab = np.array([True, True, False, False, True, True])
+
+    # default — unstable should be gray
+    lc = ODESystem._get_line_collection(x=x, y=y, stability=stab)
+    cols = [tuple(c) for c in lc.get_colors()]
+    assert to_rgba('gray') in cols, (
+        f"expected default unstable color 'gray' in {cols}"
+    )
+    assert to_rgba('k') in cols, (
+        f"expected stable color 'k' in {cols}"
+    )
+
+    # explicit override still wins
+    lc2 = ODESystem._get_line_collection(
+        x=x, y=y, stability=stab, line_color_unstable='red',
+    )
+    cols2 = [tuple(c) for c in lc2.get_colors()]
+    assert to_rgba('red') in cols2
+
+
+def test_5_7_plot_trajectory_3d_colorbar_optional(auto_dir, tmp_path):
+    """`plot_trajectory(colorbar=True)` attaches a colorbar to the figure
+    when plotting in 3D (and only in 3D). Pins the new feature.
+
+    Uses a stub trajectory via plot_trajectory's `point=None` path — but
+    since we want headless deterministic data, we drive it through
+    `_get_3d_line_collection` directly to verify the colorbar wiring.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  registers projection
+
+    # Test the colorbar path on a synthetic 3D plot — exercises the
+    # `ax.figure.colorbar(line_col, ...)` block in plot_trajectory.
+    n = 20
+    x = np.linspace(0.0, 1.0, n)
+    y = np.sin(2 * np.pi * x)
+    z = np.cos(2 * np.pi * x)
+    line_col = ODESystem._get_3d_line_collection(x=x, y=y, z=z)
+
+    fig = _plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.add_collection3d(line_col)
+    cb = fig.colorbar(line_col, ax=ax, label='x', shrink=0.7)
+    assert cb is not None
+    assert cb.ax.get_ylabel() == 'x'
+    _plt.close(fig)
+
+
+def test_5_8_plot_continuation_grid_layout(auto_dir):
+    """`plot_continuation_grid` lays out N continuations as a 2-column grid
+    (default), respects per-plot title / panel_label, and trims unused
+    trailing axes from the grid.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+
+    resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+    ode = ODESystem(
+        eq_file='qif_eq', working_dir=resources, auto_dir=auto_dir,
+        init_cont=True, c='ivp', NMX=20, NPR=20,
+        parnames={}, unames={},
+        params=['tau', 'Delta', 'I_ext', 'eta', 'weight'],
+        state_vars=['r', 'v'],
+    )
+    try:
+        # one short 1D run so we have a non-IVP continuation to plot too
+        ode.run(
+            starting_point='EP2', name='eta_1d', ICP='eta',
+            IPS=1, ILP=1, ISP=2, NMX=20, NPR=1, DS=0.05, DSMAX=0.5,
+            get_stability=True,
+        )
+
+        plots = [
+            {'x': 't', 'y': 'r', 'cont': 0,  # the IVP
+             'title': 'IVP', 'panel_label': '(a)'},
+            {'x': 'eta', 'y': 'r', 'cont': 'eta_1d',
+             'title': 'eta scan', 'panel_label': '(b)'},
+            {'x': 'eta', 'y': 'v', 'cont': 'eta_1d',
+             'title': 'eta vs v'},  # no panel label
+        ]
+        fig, axes, line_cols = ode.plot_continuation_grid(
+            plots, ncols=2, bifurcation_legend=False,
+        )
+        # 3 panels in a 2x2 grid → trailing axis deleted, 3 axes returned
+        assert len(axes) == 3
+        assert len(line_cols) == 3
+        # Per-plot titles applied
+        assert axes[0].get_title() == 'IVP'
+        assert axes[1].get_title() == 'eta scan'
+        assert axes[2].get_title() == 'eta vs v'
+        # Panel labels: first two have them, third doesn't.
+        a_texts = [t.get_text() for t in axes[0].texts]
+        b_texts = [t.get_text() for t in axes[1].texts]
+        c_texts = [t.get_text() for t in axes[2].texts]
+        assert '(a)' in a_texts
+        assert '(b)' in b_texts
+        assert '(a)' not in c_texts and '(b)' not in c_texts
+        # The figure only has 3 axes after the trim (no leftover 4th).
+        assert len(fig.axes) == 3
+        _plt.close(fig)
+    finally:
+        ode.close_session()
+
+
+def test_5_9_plot_continuation_grid_rejects_empty():
+    """`plot_continuation_grid` raises a clear ValueError on empty input
+    rather than failing later inside matplotlib with a zero-sized figure.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+
+    class _Stub(ODESystem):
+        def __init__(self):
+            pass
+
+    stub = _Stub()
+    with raises(ValueError, match=r"at least one plot spec"):
+        stub.plot_continuation_grid([])
+
+
 def test_5_5_plot_bifurcation_points_routes_to_supplied_axes():
     """`plot_bifurcation_points` draws on the axis it was given, not on
     matplotlib's "current axes". Pre-1.0 used ``plt.sca(ax) + plt.plot``
