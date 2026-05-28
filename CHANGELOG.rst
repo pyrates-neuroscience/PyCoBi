@@ -1,16 +1,32 @@
 Changelog
 =========
 
-0.10
-----
+1.0
+---
 
-0.10.0 (unreleased)
-~~~~~~~~~~~~~~~~~~~
+1.0.0
+~~~~~
 
-A larger maintenance / API-tightening release. Headline change: PyCoBi now
-surfaces PyRates' symbolic-Jacobian generation, multi-scenario c.* files, and
-unames/parnames so DFDU/DFDP entries land in the generated Fortran and
-auto-07p uses the analytical Jacobian by default.
+First production-stable release. Consolidates the 0.10.0 maintenance /
+API-tightening work with a deeper hardening pass on the automated
+continuation helpers and visualization API, plus two new use examples
+on top of a freshly built bi-exponential QIF-SFA model.
+
+Headline changes:
+
+- PyCoBi now surfaces PyRates' symbolic-Jacobian generation, multi-
+  scenario ``c.*`` files, and unames/parnames so DFDU/DFDP entries land
+  in the generated Fortran and auto-07p uses the analytical Jacobian by
+  default.
+- :func:`codim2_search` works on the PyRates-driven flow (parnames-named
+  summary columns), reliably handles ZH / GH / BT codim-2 points, and
+  surfaces auto-07p sub-run failures as :class:`UserWarning` rather than
+  aborting the whole search.
+- :meth:`ODESystem.plot_continuation_grid` lays out multiple
+  continuations as a faceted grid in one call;
+  :meth:`plot_trajectory(colorbar=True)` adds a colorbar for 3D phase
+  trajectories; the default ``line_color_unstable`` is now ``'gray'`` so
+  stable / unstable segments are visually distinguishable.
 
 Behaviour changes (be aware on upgrade)
 '''''''''''''''''''''''''''''''''''''''
@@ -18,8 +34,17 @@ Behaviour changes (be aware on upgrade)
 - :code:`init_cont` now defaults to :code:`False` on :code:`ODESystem.__init__`,
   :code:`ODESystem.from_yaml`, and :code:`ODESystem.from_template`. Set
   :code:`init_cont=True` explicitly to opt into the legacy automatic-IVP
-  behaviour (typical for equilibrium-continuation workflows that need a
-  converged starting point).
+  behaviour.
+- Default :code:`line_color_unstable` changed from :code:`'k'` to
+  :code:`'gray'` (identical to stable previously; only the linestyle
+  distinguished them). Pass :code:`line_color_unstable='k'` through any
+  plot method to revert. The line-style distinction (``'solid'`` vs
+  ``'dotted'``) is unchanged.
+- :code:`continue_period_doubling_bf`'s :code:`max_iter` now bounds the
+  *recursion depth* of the PD cascade — was previously a per-call
+  iteration counter that only fired once on entry, which made the cap
+  largely cosmetic on real cascades. Argument name preserved; semantics
+  changed.
 
 New features
 ''''''''''''
@@ -41,6 +66,28 @@ New features
 - :code:`_map_auto_kwargs` now remaps named PAR keys to integers for
   :code:`UZSTOP`, :code:`THL`, and :code:`THU` in addition to :code:`ICP` and
   :code:`UZR`.
+- :code:`ODESystem.reset_auto_state()` — staticmethod that clears auto-07p's
+  per-process retained ``parnames`` / ``unames`` so a subsequent model load
+  doesn't inherit column names from the previous one.
+- :code:`codim2_search` recurses on ZH, GH (Bautin / generalised-Hopf), and
+  BT (Bogdanov-Takens) codim-2 points (was: ZH only). Per-type recursion
+  follows standard auto-07p conventions for the switch-and-continue (LC
+  family from GH, equilibrium→Hopf from BT). Homoclinic continuation from
+  BT is deliberately left as a documented manual step (requires HomCont /
+  IPS=9). Recognised codim-2 types narrowable via :code:`codim2_types=`.
+  New :code:`kwargs_1D_lc_cont=` hook tunes the GH LC continuation.
+- :code:`ODESystem.plot_continuation_grid(plots, ncols=2, ...)` —
+  faceted multi-subplot helper. Each plot spec is a dict carrying
+  ``x``, ``y``, ``cont``, optional ``title`` / ``panel_label``, plus
+  per-plot overrides for any :meth:`plot_continuation` keyword.
+- :code:`ODESystem.plot_trajectory(colorbar=True, colorbar_label=...)` —
+  for 3D phase trajectories, attaches a figure colorbar surfacing the
+  coordinate that the Line3DCollection's colormap encodes.
+- Two new gallery examples co-located with the new
+  :code:`qif_biexp_sfa.yaml`: :code:`automated_continuation.py` (codim-2
+  BT/GH scenario in the (eta, tau_r) plane plus a recipe for the PD
+  cascade at small tau_r) and :code:`visualization_tools.py`
+  (:code:`plot_continuation_grid` + :code:`plot_trajectory(colorbar=)`).
 
 Bug fixes
 '''''''''
@@ -57,13 +104,51 @@ Bug fixes
   :code:`for bf, p1, p2 in <DataFrame>:` which actually iterates *column labels*
   — switched to :code:`.itertuples(index=False, name=None)` so the automated
   codim-2 / PD-cascade machinery actually runs over rows.
+- :code:`codim2_search` and :code:`continue_period_doubling_bf` no longer
+  hardcode :code:`f'PAR({params[0]})'` column lookups (they failed on the
+  PyRates flow where columns are named via parnames, and on the hand-
+  written flow when :code:`params=` was passed to ODESystem). Both now
+  route column access through :meth:`ODESystem.extract` and accept int
+  PAR indices or string names.
+- :code:`codim2_search`'s ZH→fold/Hopf branch used :code:`"LP" in
+  codim1_bifs` on a pandas Series — which silently tests *index labels*
+  rather than values, so the recursion effectively never fired. Replaced
+  with a substring match against the values.
 - :code:`_create_summary` was appending the whole eigenvalue list per
   eigenvalue column rather than the scalar value; now stores scalars.
 - :code:`Line3DCollection(segments=lines, ...)` was outright broken on current
   matplotlib (the 3D constructor takes :code:`lines` positionally). Fixed.
 - :code:`_get_line_collection` and :code:`_get_3d_line_collection` now pop
   :code:`linestyles` from :code:`**kwargs` so user-supplied overrides don't
-  collide with the per-segment styles the function computes.
+  collide with the per-segment styles the function computes. The size-1
+  stability tolerance was tightened (uses :code:`.size > 1` rather than the
+  cryptic :code:`np.sum(shape) > 1`). The :code:`dtype='int'` coerce is now
+  in a try/except so all-None stability arrays (typical for IVP results)
+  fall through to no-stability rendering rather than raising
+  :code:`TypeError`.
+- :code:`plot_continuation` no longer calls :code:`ax.legend()` when no
+  labelled artists exist (was: matplotlib "No artists with labels"
+  UserWarning per continuation that crossed zero special points).
+- :code:`plot_timeseries(points=None)` now plots one trace per labelled
+  point on the continuation — was previously silently dropping every
+  trace past the first via :code:`range(len(['RG']))`. Empty
+  continuations raise a clear ValueError pointing at NPR / explicit
+  :code:`points=`.
+- :code:`plot_bifurcation_points` no longer routes through
+  :code:`plt.sca(ax) + plt.plot(...)` — uses :code:`ax.plot` directly so
+  faceted layouts don't silently misroute to the current axes.
+- :code:`plot_trajectory(cutoff=...)` no longer crashes with
+  "key of type tuple not found and not a MultiIndex"
+  (:code:`np.where` returns a 1-tuple of arrays; unpacked) and no longer
+  fills the trimmed DataFrame with NaN via per-column slice-assign
+  (now slices the whole container via :code:`.iloc[idx]`). Stability
+  Series coerce in :code:`_get_line_collection` also tolerates label-
+  reindexed inputs (uses :code:`.values` upfront).
+- :code:`_resolve_summary_key` now strips the namespace prefix off the
+  user's key directly (step 4 in its docstring) — covers the PyRates
+  flow where the c.* file declares bare parnames but the user
+  references the namespaced :code:`'p/qif_op/eta'` they declared the
+  model with.
 - :code:`_start_from_solution`'s silent second :code:`auto.run` retry now
   emits a :code:`UserWarning` so callers know the original :code:`run()`
   kwargs were dropped on the retry.
@@ -96,6 +181,11 @@ Internal refactors
 - :code:`from_template` filters non-parameter args
   (:code:`{'t', 'y', 'dy', 'hist'}`) by name rather than slicing by position
   — robust against DDE models (where :code:`hist` shifts the offset).
+- :code:`continue_period_doubling_bf` rewritten with explicit recursion-
+  depth tracking (the old :code:`iteration` accumulator never accumulated
+  across sibling branches). PD points dedupe via tuples of rounded
+  coordinates; names follow a :code:`pd_d{depth}_n{i}` convention so
+  parallel sub-cascades don't collide on shared labels.
 
 0.9
 ---
