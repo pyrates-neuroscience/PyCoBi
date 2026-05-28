@@ -1,0 +1,65 @@
+%YAML 1.2
+---
+
+# QIF mean-field model with bi-exponential spike-frequency adaptation
+# (multiplicative form). Source: Scholl 2020 lab rotation report
+# (supervised by R. Gast, T. Knoesche), Section 2.1.5 — extending the
+# alpha-kernel QIF-SFA of Gast, Schmidt, Knoesche (2020) Neural Computation.
+#
+# State variables:
+#   r — average firing rate
+#   v — average membrane potential
+#   A — adaptation variable (output of the bi-exponential convolution)
+#   B — auxiliary variable for the second-order bi-exponential ODE
+#
+# Parameters:
+#   tau_r  — adaptation rise time constant
+#   tau_d  — adaptation decay time constant
+#   alpha  — adaptation rate
+#   eta    — mean background excitability (Cauchy distribution location)
+#   Delta  — half-width of the excitability distribution
+#   tau    — population time constant
+#
+# Two phenomena make this model a useful demo target for PyCoBi:
+#
+#   * tau_r approx tau_d (alpha-kernel-equivalent regime): the Hopf curve
+#     in (eta, tau_r) carries a clear generalised-Hopf (GH) point and the
+#     interaction with the fold curve yields a Bogdanov-Takens (BT)
+#     scenario — useful for `codim2_search`.
+#
+#   * tau_r near zero (mono-exponential adaptation limit): the system
+#     undergoes a cascade of period-doubling bifurcations leading to
+#     chaos — useful for `continue_period_doubling_bf`.
+
+qif_biexp_sfa_op:
+  base: OperatorTemplate
+  equations:
+    - "r' = (Delta/(pi*tau) + 2.0*r*v) / tau"
+    - "v' = (v^2 + eta + I_ext + tau*r_in*(1.0 - A) - (pi*tau*r)^2) / tau"
+    - "A' = B"
+    - "B' = (alpha*r*tau_d - B*(tau_r + tau_d) - A) / (tau_r*tau_d)"
+  variables:
+    r: output(0.0)
+    v: variable(-2.0)
+    A: variable(0.0)
+    B: variable(0.0)
+    Delta: 2.0
+    tau: 1.0
+    eta: -5.0
+    tau_r: 10.0
+    tau_d: 10.0
+    alpha: 0.05
+    I_ext: input(0.0)
+    r_in: input(0.0)
+
+qif_biexp_sfa_pop:
+  base: NodeTemplate
+  operators:
+    - qif_biexp_sfa_op
+
+qif_biexp_sfa:
+  base: CircuitTemplate
+  nodes:
+    p: qif_biexp_sfa_pop
+  edges:
+    - [p/qif_biexp_sfa_op/r, p/qif_biexp_sfa_op/r_in, null, {weight: 15.0}]

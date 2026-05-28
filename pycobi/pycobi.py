@@ -1000,6 +1000,12 @@ class ODESystem:
              when PyRates' ``parnames`` / ``unames`` emit the bare local name
              (``'eta'``) while PyCoBi's ``_var_map_inv`` carries the namespaced
              form (``'p/qif_op/eta'``).
+          4. Strip the namespace prefix from ``key`` itself and retry — needed
+             on the PyRates flow where ``_var_map_inv`` is empty (the user
+             didn't pass explicit ``params=``) but the user naturally references
+             the namespaced name (``'p/qif_op/eta'``) they declared the model
+             with, while the summary columns are the bare parnames PyRates
+             emitted (``'eta'``).
 
         Raises a ``KeyError`` that lists what was tried if nothing matches.
         """
@@ -1008,14 +1014,22 @@ class ODESystem:
         mapped = self._var_map_inv.get(key)
         if mapped is not None and mapped in columns:
             return mapped
-        bare = mapped.rsplit('/', 1)[-1] if isinstance(mapped, str) else None
-        if bare is not None and bare in columns:
-            return bare
+        bare_mapped = mapped.rsplit('/', 1)[-1] if isinstance(mapped, str) else None
+        if bare_mapped is not None and bare_mapped in columns:
+            return bare_mapped
+        # Step 4: derive the bare name from the user's key directly. Covers
+        # the PyRates-driven flow where `_var_map_inv` is empty but the user
+        # writes the namespaced name they used in node_vars / edge_vars.
+        bare_key = key.rsplit('/', 1)[-1] if isinstance(key, str) and '/' in key else None
+        if bare_key is not None and bare_key in columns:
+            return bare_key
         tried = [key]
         if mapped is not None:
             tried.append(mapped)
-        if bare is not None and bare not in tried:
-            tried.append(bare)
+        if bare_mapped is not None and bare_mapped not in tried:
+            tried.append(bare_mapped)
+        if bare_key is not None and bare_key not in tried:
+            tried.append(bare_key)
         raise KeyError(
             f"{key!r} is not a recognised summary column. Tried: {tried}. "
             f"Available columns: {columns}."
@@ -1163,10 +1177,22 @@ class ODESystem:
                     raise ValueError("Could not find time variable on solution to apply cutoff to. Please consider "
                                      "adding the keyword argument `get_timeseries` to the `PyCoBi.run()` call for which"
                                      "the phase space trajectory should be plotted.")
-            idx = np.where(time > cutoff)
-            for key, val in results.items():
-                if hasattr(val, 'shape') and val.shape:
-                    results[key] = val[idx]
+            # `np.where(condition)` returns a 1-element tuple of arrays;
+            # unpack it so the indexing below sees a flat ndarray. The
+            # pre-1.0 form (a) passed the raw tuple into pandas Series
+            # indexing (which interpreted it as a MultiIndex key) and
+            # (b) assigned per-column slices back into `results`, which
+            # pandas aligned by index — filling NaN for every row not in
+            # the slice. Slice the whole container at once instead.
+            idx = np.where(np.asarray(time) > cutoff)[0]
+            if hasattr(results, 'iloc'):
+                results = results.iloc[idx]
+            else:
+                # results is a dict (the fallback path's `results['stability']
+                # = None` branch); slice the array-valued entries by hand.
+                for key, val in list(results.items()):
+                    if hasattr(val, 'shape') and val.shape:
+                        results[key] = val[idx]
 
         if len(variables) == 2:
 
@@ -1751,6 +1777,13 @@ class ODESystem:
         # handles both 1-D-length-1 and N-D-length-1 cases without crashing
         # the line-collection construction. The pre-1.0 code had this guard
         # on `x` but not on `y`.
+        #
+        # Strip pandas Series wrappers so `y[0]` / `y[i]` below are
+        # positional regardless of the Series' index. After a `cutoff`
+        # slice in `plot_trajectory` the Series is reindexed and label-
+        # based access via `y[0]` would raise `KeyError: 0`.
+        if hasattr(y, 'values'):
+            y = y.values
         x = np.asarray(x).reshape(-1, 1)
         if hasattr(y[0], "shape") and sum(y[0].shape) > 1:
             y = np.asarray([y[i] for i in range(y.shape[0])])
@@ -1772,10 +1805,21 @@ class ODESystem:
         # segment via the diff). The pre-1.0 form used
         # `np.sum(stability.shape) > 1` — semantically equivalent for 1-D
         # arrays but cryptic; switched to the explicit `.size > 1`.
+        # The `dtype='int'` coerce can raise TypeError if the stability
+        # array contains None values (e.g. an IVP continuation that
+        # didn't record stability per time-step); fall through to the
+        # no-stability branch in that case.
+        stab_arr = None
         if stability is not None and np.asarray(stability).size > 1:
+            try:
+                stab_arr = np.asarray(stability, dtype='int')
+            except TypeError:
+                stab_arr = None
+
+        if stab_arr is not None:
 
             # collect indices
-            stability = np.asarray(stability, dtype='int')
+            stability = stab_arr
             stability_changes = np.concatenate([np.zeros((1,)), np.diff(stability)])
             idx_changes = np.sort(np.argwhere(stability_changes != 0))
             idx_changes = np.append(idx_changes, len(stability_changes))
@@ -1837,10 +1881,19 @@ class ODESystem:
         # if stability was passed, collect indices for stable line segments
         ###################################################################
 
+        # Same coerce-tolerant pattern as `_get_line_collection`: skip
+        # stability segmentation if the array contains None values.
+        stab_arr = None
         if stability is not None and np.asarray(stability).size > 1:
+            try:
+                stab_arr = np.asarray(stability, dtype='int')
+            except TypeError:
+                stab_arr = None
+
+        if stab_arr is not None:
 
             # collect indices
-            stability = np.asarray(stability, dtype='int')
+            stability = stab_arr
             stability_changes = np.concatenate([np.zeros((1,)), np.diff(stability)])
             idx_changes = np.sort(np.argwhere(stability_changes != 0))
             idx_changes = np.append(idx_changes, len(stability_changes))

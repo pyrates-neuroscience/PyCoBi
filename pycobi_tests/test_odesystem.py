@@ -1743,6 +1743,104 @@ def test_5_8_plot_continuation_grid_layout(auto_dir):
         ode.close_session()
 
 
+def test_5_10_get_line_collection_tolerates_none_stability():
+    """`_get_line_collection` and `_get_3d_line_collection` fall through
+    to the no-stability branch when the stability array contains ``None``
+    values rather than crashing with ``TypeError: int() argument...``.
+
+    Triggered by passing an IVP continuation through ``plot_trajectory``
+    — IVPs don't track per-time-step stability, so the column comes out
+    as all-None and the line-collection helper used to error inside
+    ``np.asarray(stability, dtype='int')``. The pre-1.0 helpers had no
+    try/except around the int coerce.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+
+    n = 6
+    x = np.linspace(0.0, 1.0, n)
+    y = np.linspace(0.0, 0.5, n)
+    z = np.linspace(0.0, 0.25, n)
+    stab = np.array([None, None, None, None, None, None], dtype=object)
+
+    # 2D — no crash; falls back to no-stability rendering
+    lc = ODESystem._get_line_collection(x=x, y=y, stability=stab)
+    assert lc is not None
+    # 3D — same
+    lc3 = ODESystem._get_3d_line_collection(x=x, y=y, z=z, stability=stab)
+    assert lc3 is not None
+
+
+def test_5_11_plot_trajectory_cutoff_uses_iloc():
+    """`plot_trajectory` with ``cutoff=`` and ``point=None`` slices the
+    full-DataFrame ``results`` via positional ``iloc`` (so the np.where
+    tuple unpacks cleanly), rather than directly indexing the row with
+    a tuple — which pandas interprets as a MultiIndex key and crashes
+    with "key of type tuple not found and not a MultiIndex".
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as _plt
+    import pandas as _pd
+
+    n = 30
+    t_arr = np.linspace(0.0, 10.0, n)
+    r_arr = np.sin(t_arr)
+    v_arr = np.cos(t_arr)
+
+    class _Stub(ODESystem):
+        def __init__(self):
+            self.results = {0: {1: 'sentinel'}}
+            self._results_map = {'ts': 0}
+            self._var_map = {}
+            self._var_map_inv = {}
+
+        def extract(self, keys, cont, point=None):
+            # Pretend to be the time-series result of a 2D IVP. point=None
+            # → return the full DataFrame; otherwise return a Series row.
+            cols = {'r': r_arr, 'v': v_arr, 'time': t_arr, 't': t_arr,
+                    'stability': np.array([True] * n)}
+            df = _pd.DataFrame(cols)
+            if point is None:
+                return df, {k: k for k in keys}
+            return df.iloc[point], {k: k for k in keys}
+
+    stub = _Stub()
+    fig, ax = _plt.subplots()
+    # cutoff=5.0 should keep ~half the trajectory; primary smoke test is
+    # that it doesn't raise the pre-fix KeyError.
+    stub.plot_trajectory(
+        variables=['r', 'v'], cont='ts', point=None,
+        ax=ax, cutoff=5.0,
+    )
+    assert len(ax.collections) == 1
+    _plt.close(fig)
+
+
+def test_5_12_resolve_summary_key_strips_namespace_from_key():
+    """`_resolve_summary_key` strips the namespace prefix off the user's
+    key when neither the literal key nor a ``_var_map_inv`` lookup match
+    — this is the PyRates flow case where the c.* file declares bare
+    parnames (``'eta'``) and the user, having declared the model with
+    namespaced names (``'p/qif_op/eta'``), naturally writes the namespaced
+    form when extracting.
+    """
+    class _Stub(ODESystem):
+        def __init__(self):
+            self._var_map = {}
+            self._var_map_inv = {}
+
+    stub = _Stub()
+    columns = ['eta', 'r', 'v', 'Delta', 'bifurcation']
+    # Namespaced → bare strip works
+    assert stub._resolve_summary_key('p/qif_op/eta', columns) == 'eta'
+    # Already-bare passes through
+    assert stub._resolve_summary_key('eta', columns) == 'eta'
+    # Truly unknown raises KeyError listing what was tried
+    with raises(KeyError, match=r"is not a recognised summary column"):
+        stub._resolve_summary_key('p/qif_op/zzz', columns)
+
+
 def test_5_9_plot_continuation_grid_rejects_empty():
     """`plot_continuation_grid` raises a clear ValueError on empty input
     rather than failing later inside matplotlib with a zero-sized figure.
