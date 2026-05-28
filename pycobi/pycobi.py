@@ -1000,12 +1000,20 @@ class ODESystem:
              when PyRates' ``parnames`` / ``unames`` emit the bare local name
              (``'eta'``) while PyCoBi's ``_var_map_inv`` carries the namespaced
              form (``'p/qif_op/eta'``).
-          4. Strip the namespace prefix from ``key`` itself and retry — needed
-             on the PyRates flow where ``_var_map_inv`` is empty (the user
-             didn't pass explicit ``params=``) but the user naturally references
-             the namespaced name (``'p/qif_op/eta'``) they declared the model
-             with, while the summary columns are the bare parnames PyRates
-             emitted (``'eta'``).
+          4. Bridge through PyRates' uname/parname mapping: look up the user's
+             key in ``_var_map`` to get the auto-07p slot index, then translate
+             that slot index to the column name PyRates declared in the c.*
+             ``unames`` / ``parnames`` dict (which auto-07p exposes via its
+             process-global runner). Critical for multi-node models where
+             PyRates disambiguates name collisions with ``_v1`` / ``_v2``
+             suffixes — without this step, all four ``v`` variables on a
+             three-node Jansen-Rit circuit would silently collapse to the
+             single bare ``'v'`` column.
+          5. Strip the namespace prefix from ``key`` itself and retry — used
+             only when step 4 had no runner state (no ``run()`` call has loaded
+             a c.* file yet, or auto-07p isn't installed). Covers single-node
+             PyRates models for which the suffix-disambiguation path doesn't
+             apply.
 
         Raises a ``KeyError`` that lists what was tried if nothing matches.
         """
@@ -1017,9 +1025,21 @@ class ODESystem:
         bare_mapped = mapped.rsplit('/', 1)[-1] if isinstance(mapped, str) else None
         if bare_mapped is not None and bare_mapped in columns:
             return bare_mapped
-        # Step 4: derive the bare name from the user's key directly. Covers
-        # the PyRates-driven flow where `_var_map_inv` is empty but the user
-        # writes the namespaced name they used in node_vars / edge_vars.
+        # Step 4: namespace → slot via `_var_map`, then slot → PyRates-emitted
+        # column name via the c.* uname/parname dict (read from auto-07p's
+        # runner). This is the ONLY step that handles multi-node operator
+        # collisions correctly; the bare-strip in step 5 will silently pick
+        # the first such collision when several columns share the un-prefixed
+        # name.
+        slot_resolved = None
+        entry = self._var_map.get(key)
+        if entry is not None:
+            kind, idx = entry
+            slot_resolved = self._slot_to_uname_or_parname(kind, idx)
+            if slot_resolved is not None and slot_resolved in columns:
+                return slot_resolved
+        # Step 5: derive the bare name from the user's key directly. The
+        # fallback when step 4 had no runner state to consult.
         bare_key = key.rsplit('/', 1)[-1] if isinstance(key, str) and '/' in key else None
         if bare_key is not None and bare_key in columns:
             return bare_key
@@ -1028,12 +1048,44 @@ class ODESystem:
             tried.append(mapped)
         if bare_mapped is not None and bare_mapped not in tried:
             tried.append(bare_mapped)
+        if slot_resolved is not None and slot_resolved not in tried:
+            tried.append(slot_resolved)
         if bare_key is not None and bare_key not in tried:
             tried.append(bare_key)
         raise KeyError(
             f"{key!r} is not a recognised summary column. Tried: {tried}. "
             f"Available columns: {columns}."
         )
+
+    def _slot_to_uname_or_parname(self, kind: str, idx: int):
+        """Translate an auto-07p slot identifier ``(kind, idx)`` to the column
+        name PyRates declared for that slot in the c.* file.
+
+        ``kind`` is ``'U'`` (state variable) or ``'P'`` (parameter); ``idx`` is
+        the slot index. Returns the corresponding ``unames`` / ``parnames``
+        value if the global auto-07p runner has loaded a c.* file, else
+        ``None`` (in which case `_resolve_summary_key` falls through to the
+        bare-strip fallback).
+
+        The runner stores these as a list of ``[idx, name]`` pairs (see
+        ``parseC.parseC.__setitem__``); we materialise them into a dict
+        on demand. No caching: the cost is negligible (a few dozen
+        entries), and a cache would risk going stale if a subsequent
+        ``run()`` loaded a c.* file with a different ``unames`` / ``parnames``
+        dict for the same model.
+        """
+        runner = self._get_auto_runner()
+        if runner is None:
+            return None
+        constants = runner.options.get('constants') if runner.options else None
+        if not constants:
+            return None
+        key_name = 'unames' if kind == 'U' else 'parnames'
+        entries = constants.get(key_name)
+        if not entries:
+            return None
+        mapping = {int(pair[0]): pair[1] for pair in entries if len(pair) >= 2}
+        return mapping.get(int(idx))
 
     def plot_continuation(self, x: str, y: str, cont: Union[Any, str, int], ax: plt.Axes = None,
                           force_axis_lim_update: bool = False, bifurcation_legend: bool = True,

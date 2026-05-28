@@ -101,13 +101,29 @@ t_sols, t_cont = jrc_auto.run(
 #   - t_cont: type 'branch' or 'bifDiag', an auto-07p object that can be used for subsequent parameter continuations
 
 # %% plotting the solutions:
-v_pce = t_sols["pc/rpo_e_in/v"]
-v_pci = t_sols["pc/rpo_i/v"]
+#
+# When PyRates emits ``unames`` / ``parnames`` into the c.* file (the default
+# since PyRates 1.1.0), auto-07p uses those names as the DataFrame column
+# headers — and for multi-node models with shared operators (like the three
+# Jansen-Rit nodes that each carry a ``v`` variable), PyRates disambiguates
+# the collisions with ``_v1``/``_v2``/``_v3`` suffixes. So the DataFrame's
+# columns are ``v`` / ``v_v1`` / ``v_v2`` / ``v_v3``, not the namespaced
+# ``pc/rpo_e_in/v`` you'd write in YAML.
+#
+# Direct indexing ``t_sols["pc/rpo_e_in/v"]`` therefore raises ``KeyError``.
+# Use ``ode.extract(['name'], cont=...)`` instead — it routes through
+# ``_resolve_summary_key`` which knows how to bridge namespaced names through
+# PyRates' uname/parname mapping to the actual column names.
+v_pce_df, _ = jrc_auto.extract(['pc/rpo_e_in/v'], cont='time')
+v_pci_df, _ = jrc_auto.extract(['pc/rpo_i/v'], cont='time')
+t_df, _ = jrc_auto.extract(['t'], cont='time')
+v_pce = v_pce_df.iloc[:, 0]
+v_pci = v_pci_df.iloc[:, 0]
+t = t_df.iloc[:, 0]
 pc = v_pce + v_pci
-t = t_sols["t"]
-plt.plot(t,v_pce,label='V_PCE')
-plt.plot(t,v_pci,label='V_PCI')
-plt.plot(t,pc,label='PC')
+plt.plot(t, v_pce, label='V_PCE')
+plt.plot(t, v_pci, label='V_PCI')
+plt.plot(t, pc, label='PC')
 plt.legend()
 plt.show()
 
@@ -154,21 +170,26 @@ u_sols, u_cont = jrc_auto.run(
 jrc_auto.plot_continuation('pc/rpo_e_in/u', 'pc/rpo_e_in/v', cont='u')
 plt.show()
 # %% Plotting the variable y (PC membrane potential) with the PyCobi function
+#
+# Same pattern as above: use ``extract`` for namespace-aware reads, then write
+# the derived column back into the summary under a bare name that
+# ``plot_continuation`` can index directly.
 
-y1 = u_sols["pc/rpo_e_in/v"]
-y2 = u_sols["pc/rpo_i/v"]
-y = y1+y2
-u_sols["y"] = y # adding the y as a variable in the dataframe with the continuation
+y1_df, _ = jrc_auto.extract(['pc/rpo_e_in/v'], cont='u')
+y2_df, _ = jrc_auto.extract(['pc/rpo_i/v'], cont='u')
+y = y1_df.iloc[:, 0] + y2_df.iloc[:, 0]
+u_sols["y"] = y  # adding y as a column on the continuation summary
 jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y', cont='u')
 plt.show()
 
-# %% Plotting the state variable y0 with the PyCobi function 
+# %% Plotting the state variable y0 with the PyCobi function
 
 fig, ax = plt.subplots()
 C = 135
-y0 = u_sols["ein/rpo_e/v"]/C
-u_sols["y0"] = y0 # adding the y0 as a variable in the dataframe with the continuation
-jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont='u',ax=ax)
+ein_v_df, _ = jrc_auto.extract(['ein/rpo_e/v'], cont='u')
+y0 = ein_v_df.iloc[:, 0] / C
+u_sols["y0"] = y0  # adding y0 as a column on the continuation summary
+jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont='u', ax=ax)
 plt.show()
 
 # %%
@@ -189,19 +210,26 @@ for i in range(1,4):
 plt.show()
 
 # %% Plotting of the limit cycle continuations - y0
+#
+# For limit-cycle continuations PyCoBi stores each state variable as a
+# (min, max) envelope under a MultiIndex column (e.g. ``('v_v2', 0)`` for
+# the min and ``('v_v2', 1)`` for the max). ``extract`` returns the
+# DataFrame slice for the resolved column, so ``.iloc[:, 0]`` / ``.iloc[:, 1]``
+# then pick the min/max branches.
 fig, ax = plt.subplots()
-jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont='u',ax=ax)
+jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont='u', ax=ax)
 
-for i in range(1,4):
+for i in range(1, 4):
+    ein_v_lc, _ = jrc_auto.extract(['ein/rpo_e/v'], cont=f'u_lc{i}')
     # lower branch
-    y0_d = limit_cycles_sols[f'u_lc{i}_sols']["ein/rpo_e/v"].iloc[:, 0]/C
+    y0_d = ein_v_lc.iloc[:, 0] / C
     # upper branch
-    y0_u = limit_cycles_sols[f'u_lc{i}_sols']["ein/rpo_e/v"].iloc[:, 1]/C
-    
+    y0_u = ein_v_lc.iloc[:, 1] / C
+
     limit_cycles_sols[f'u_lc{i}_sols'][('y0', 0)] = y0_d
     limit_cycles_sols[f'u_lc{i}_sols'][('y0', 1)] = y0_u
-    jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont=f'u_lc{i}', ax=ax, ignore=["UZ", "BP"],
-                               line_color_stable="green")
+    jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y0', cont=f'u_lc{i}', ax=ax,
+                                ignore=["UZ", "BP"], line_color_stable="green")
 
 plt.show()
 
@@ -217,14 +245,15 @@ r = 560
 v0 = 0.006
 
 fig, ax = plt.subplots()
-jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y', cont='u',ax=ax)
+jrc_auto.plot_continuation('pc/rpo_e_in/u', 'y', cont='u', ax=ax)
 
-for i in range(1,4):
-   
+for i in range(1, 4):
+
+    ein_v_lc, _ = jrc_auto.extract(['ein/rpo_e/v'], cont=f'u_lc{i}')
     # lower branch
-    y0_d = limit_cycles_sols[f'u_lc{i}_sols']["ein/rpo_e/v"].iloc[:, 0]/C
+    y0_d = ein_v_lc.iloc[:, 0] / C
     # upper branch
-    y0_u = limit_cycles_sols[f'u_lc{i}_sols']["ein/rpo_e/v"].iloc[:, 1]/C
+    y0_u = ein_v_lc.iloc[:, 1] / C
 
     y_d = np.real(v0 - (1/r) * np.log(((2*A*e0)/(a*y0_d.astype(complex))) - 1))
     y_u = np.real(v0 - (1/r) * np.log(((2*A*e0)/(a*y0_u.astype(complex))) - 1))

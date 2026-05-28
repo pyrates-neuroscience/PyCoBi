@@ -1817,6 +1817,94 @@ def test_5_11_plot_trajectory_cutoff_uses_iloc():
     _plt.close(fig)
 
 
+def test_5_13_resolve_summary_key_bridges_via_uname_parname():
+    """`_resolve_summary_key` uses `_var_map` (namespaced name → slot index)
+    *together with* PyRates' uname/parname declaration (slot index →
+    DataFrame column) so multi-node models with operator collisions
+    resolve correctly.
+
+    Pre-1.0.1 the bare-namespace-strip fallback silently collapsed all
+    four ``v`` variables on a three-node Jansen-Rit circuit
+    (``pc/rpo_e_in/v``, ``pc/rpo_i/v``, ``ein/rpo_e/v``, ``iin/rpo_e/v``)
+    to the single bare ``'v'`` column — different state-variable readings
+    aliased to the same data without any error. Pinned via stubs so the
+    test is fast and deterministic (no auto-07p run required).
+    """
+    class _FakeRunner:
+        def __init__(self):
+            # `parseC.parseC.__setitem__` stores unames/parnames as a list
+            # of `[idx, name]` pairs (mirroring auto-07p's runner state).
+            self.options = {
+                'constants': {
+                    'unames': [
+                        [1, 'v'], [2, 'x'],
+                        [3, 'v_v1'], [4, 'x_v1'],
+                        [5, 'v_v2'], [6, 'x_v2'],
+                        [7, 'v_v3'], [8, 'x_v3'],
+                    ],
+                    'parnames': [
+                        [1, 'weight'], [2, 'weight_v1'], [3, 'tau'],
+                    ],
+                }
+            }
+
+    class _Stub(ODESystem):
+        def __init__(self):
+            # Match the JRC layout: four namespaced `v` variables map to
+            # alternating odd slots (U(1), U(3), U(5), U(7)).
+            self._var_map = {
+                'pc/rpo_e_in/v': ('U', 1),
+                'pc/rpo_i/v':    ('U', 3),
+                'ein/rpo_e/v':   ('U', 5),
+                'iin/rpo_e/v':   ('U', 7),
+                'pc/rpo_e_in/tau': ('P', 3),
+            }
+            self._var_map_inv = {
+                'U(1)': 'pc/rpo_e_in/v', 'U(3)': 'pc/rpo_i/v',
+                'U(5)': 'ein/rpo_e/v',   'U(7)': 'iin/rpo_e/v',
+                'PAR(3)': 'pc/rpo_e_in/tau',
+            }
+            self._fake_runner = _FakeRunner()
+
+        @staticmethod
+        def _get_auto_runner():
+            return _Stub._instance._fake_runner  # type: ignore[attr-defined]
+
+    stub = _Stub()
+    _Stub._instance = stub
+    columns = ['v', 'x', 'v_v1', 'x_v1', 'v_v2', 'x_v2', 'v_v3', 'x_v3',
+               'weight', 'weight_v1', 'tau']
+
+    # Each namespaced 'v' resolves to its own column.
+    assert stub._resolve_summary_key('pc/rpo_e_in/v', columns) == 'v'
+    assert stub._resolve_summary_key('pc/rpo_i/v',    columns) == 'v_v1'
+    assert stub._resolve_summary_key('ein/rpo_e/v',   columns) == 'v_v2'
+    assert stub._resolve_summary_key('iin/rpo_e/v',   columns) == 'v_v3'
+    # Parameter slot translation works the same way.
+    assert stub._resolve_summary_key('pc/rpo_e_in/tau', columns) == 'tau'
+
+
+def test_5_14_resolve_summary_key_falls_through_when_no_runner():
+    """When auto-07p's runner isn't loaded yet (or `_get_auto_runner`
+    returns ``None`` because auto isn't installed), step 4 short-circuits
+    cleanly to ``None`` and the resolver falls through to step 5 (the
+    bare-namespace-strip). Single-node models still resolve.
+    """
+    class _Stub(ODESystem):
+        def __init__(self):
+            self._var_map = {'p/op/eta': ('P', 4)}
+            self._var_map_inv = {'PAR(4)': 'p/op/eta'}
+
+        @staticmethod
+        def _get_auto_runner():
+            return None
+
+    stub = _Stub()
+    columns = ['eta', 'r', 'v']
+    # Step 4 misses (no runner), step 5 succeeds via bare-name strip.
+    assert stub._resolve_summary_key('p/op/eta', columns) == 'eta'
+
+
 def test_5_12_resolve_summary_key_strips_namespace_from_key():
     """`_resolve_summary_key` strips the namespace prefix off the user's
     key when neither the literal key nor a ``_var_map_inv`` lookup match

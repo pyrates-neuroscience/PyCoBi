@@ -4,6 +4,38 @@ Changelog
 1.0
 ---
 
+1.0.1
+~~~~~
+
+Patch release fixing a silent name-resolution bug that affected multi-node
+models with shared operators (the canonical Jansen-Rit case: three nodes
+each carrying a ``v`` variable). PyRates disambiguates these collisions
+with ``_v1`` / ``_v2`` / ``_v3`` suffixes in the c.* ``unames`` declaration
+— so the four distinct ``v`` variables are stored as ``v``, ``v_v1``,
+``v_v2``, ``v_v3`` in the DataFrame columns. Pre-1.0.1 the
+``_resolve_summary_key`` fallback chain didn't know about PyRates'
+uname/parname → column mapping; namespaced inputs like
+``'pc/rpo_i/v'`` silently collapsed to the bare ``'v'`` column —
+the same column for every node — without any error to flag the aliasing.
+
+- :code:`_resolve_summary_key` now reads the active ``unames`` / ``parnames``
+  list off auto-07p's process-global runner and uses it as a bridge between
+  ``_var_map`` (namespaced name → auto-07p slot index) and the DataFrame
+  columns (PyRates-emitted, possibly suffix-disambiguated). Each of the
+  four Jansen-Rit ``v`` variables now resolves to its own distinct column.
+  Falls through cleanly when the runner isn't yet populated (single-node
+  models still work via the existing bare-strip fallback).
+- :code:`documentation/use_examples/jansenrit_rg_updated.py` updated to
+  use :code:`ODESystem.extract` for namespaced reads of DataFrame columns
+  (direct ``t_sols["pc/rpo_e_in/v"]`` indexing bypasses the resolver and
+  raises ``KeyError`` for namespaced keys on the post-PyRates-parnames
+  schema). Inline comments document the underlying naming flow.
+
+Pinned by :code:`test_5_13_resolve_summary_key_bridges_via_uname_parname`
+(multi-node JRC layout with a stubbed auto-07p runner) and
+:code:`test_5_14_resolve_summary_key_falls_through_when_no_runner`
+(single-node fallback path).
+
 1.0.0
 ~~~~~
 
