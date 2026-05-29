@@ -131,7 +131,25 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
     solutions: list = []
     pd_count = 0  # auto-07p uses 1-indexed PD labels
 
-    for _, point_info in solution.items():
+    # Normalise `solution` to an iterable of (point_id, {'bifurcation': str})
+    # mappings. PyCoBi's ``ode.results[cont_key]`` returns a pandas DataFrame
+    # whose rows are the labelled points and whose ``('bifurcation', '')``
+    # column carries the labels; iterating that DataFrame's ``.items()``
+    # walks COLUMNS not rows, so the original literal-dict iteration silently
+    # missed every PD label. Handle both forms transparently.
+    try:
+        import pandas as _pd
+        is_df = isinstance(solution, _pd.DataFrame)
+    except ImportError:
+        is_df = False
+    if is_df:
+        bif_col = solution[('bifurcation', '')] if ('bifurcation', '') in solution.columns \
+            else solution['bifurcation']
+        iterable = ((idx, {'bifurcation': str(bif)}) for idx, bif in bif_col.items())
+    else:
+        iterable = solution.items()
+
+    for _, point_info in iterable:
         if 'PD' not in point_info.get('bifurcation', ''):
             continue
         pd_count += 1
@@ -261,24 +279,41 @@ def codim2_search(params: list, starting_points: list,
 
     for p in starting_points:
 
-        # initial 2-parameter codim-1 continuation
+        # initial 2-parameter codim-1 continuation.
+        # `get_stability=False` is set as the default: a continuation that
+        # tracks a codim-1 manifold in 2 parameters is itself a curve of
+        # codim-1 bifurcation points (folds / Hopfs), so per-point
+        # equilibrium-stability flags are meaningless and would mostly
+        # toggle on numerical noise. Users can opt back in by passing
+        # `get_stability=True` explicitly through **kwargs.
+        # `ILP=1` enables fold-on-curve detection — that's how BT
+        # (fold meeting Hopf) and CP (cusp on a fold curve) are picked up.
         kwargs_tmp = dict(kwargs)
+        kwargs_tmp.setdefault('get_stability', False)
         if periodic:
-            kwargs_tmp.update({'ILP': 0, 'IPS': 2, 'ISW': 2, 'ISP': 2,
+            kwargs_tmp.update({'ILP': 1, 'IPS': 2, 'ISW': 2, 'ISP': 2,
                                'ICP': list(params) + [11]})
             if kwargs_2D_lc_cont:
                 kwargs_tmp.update(kwargs_2D_lc_cont)
         else:
-            kwargs_tmp.update({'ILP': 0, 'IPS': 1, 'ISW': 2, 'ISP': 2,
+            kwargs_tmp.update({'ILP': 1, 'IPS': 1, 'ISW': 2, 'ISP': 2,
                                'ICP': list(params)})
             if kwargs_2D_cont:
                 kwargs_tmp.update(kwargs_2D_cont)
+
+        # `bidirectional=True` is the default — most codim-2 curves are
+        # cleanly traceable both ways from the starting label. Override by
+        # passing `bidirectional=False` (with an appropriately signed `DS`)
+        # for curves where the bidirectional path crosses a singularity
+        # — e.g. a fold curve emanating from an LP toward a nearby cusp,
+        # where the reverse direction can get stuck bouncing at the cusp.
+        kwargs_tmp.setdefault('bidirectional', True)
 
         name_tmp = f"{name}:{p}"
         try:
             sols, cont = pyauto_instance.run(
                 starting_point=p, origin=origin, name=name_tmp,
-                bidirectional=True, **kwargs_tmp,
+                **kwargs_tmp,
             )
         except Exception as exc:
             warnings.warn(

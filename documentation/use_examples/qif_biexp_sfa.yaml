@@ -1,10 +1,22 @@
 %YAML 1.2
 ---
 
-# QIF mean-field model with bi-exponential spike-frequency adaptation
-# (multiplicative form). Source: Scholl 2020 lab rotation report
-# (supervised by R. Gast, T. Knoesche), Section 2.1.5 — extending the
-# alpha-kernel QIF-SFA of Gast, Schmidt, Knoesche (2020) Neural Computation.
+# QIF mean-field model with bi-exponential spike-frequency adaptation.
+# Additive form (matches the `qif_sfa_op` alpha-kernel template in
+# PyRates' built-in `model_templates.neural_mass_models.qif.qif_sfa`):
+# the adaptation variable `A` enters the membrane-potential equation as
+# `eta - A`, not as a multiplicative coupling on the recurrent input.
+#
+# Source: Scholl 2020 lab rotation report (supervised by R. Gast,
+# T. Knoesche), Section 2.1.2/2.1.4 — generalised to a bi-exponential
+# (rather than mono-exponential) kernel; extends the alpha-kernel
+# QIF-SFA of Gast, Schmidt, Knoesche (2020) Neural Computation.
+#
+# Reduces exactly to the alpha-kernel form when `tau_r == tau_d == tau_a`:
+# both kernels then satisfy `tau_a^2 A'' + 2 tau_a A' + A = alpha r tau_a`,
+# so the bi-exponential model is a strict generalisation that recovers
+# the alpha-kernel results in that limit (verified by side-by-side
+# bifurcation analysis on the QIF-SFA example).
 #
 # State variables:
 #   r — average firing rate
@@ -35,7 +47,7 @@ qif_biexp_sfa_op:
   base: OperatorTemplate
   equations:
     - "r' = (Delta/(pi*tau) + 2.0*r*v) / tau"
-    - "v' = (v^2 + eta + I_ext + tau*r_in*(1.0 - A) - (pi*tau*r)^2) / tau"
+    - "v' = (v^2 + eta - A + I_ext + tau*r_in - (pi*tau*r)^2) / tau"
     - "A' = B"
     - "B' = (alpha*r*tau_d - B*(tau_r + tau_d) - A) / (tau_r*tau_d)"
   variables:
