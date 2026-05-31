@@ -87,14 +87,14 @@ ode.update_bifurcation_style('CP', marker='d', color='#7F4FBF')
 # We'll cover two parameter regimes of this model in one example:
 #
 # 1. :math:`\\tau_r = \\tau_d = 10` (alpha-kernel-equivalent): clean codim-2
-#    structure in :math:`(\\bar\\eta,\\, \\Delta)` — BT / GH / CP.
-# 2. :math:`\\tau_r = 0.3 \\ll \\tau_d`: period-doubling cascade on the LC
-#    born at the upper Hopf.
+#    structure in :math:`(\\bar\\eta,\\, \\Delta)` — BT / GH / CP, no PD.
+# 2. :math:`\\tau_r = 0.1 \\ll \\tau_d`: same codim-2 backbone plus a
+#    period-doubling cascade on the LC born at the upper Hopf.
 #
 # Rather than re-instantiate the model twice, we continue the steady state
 # in :math:`\\tau_r` from the initial :math:`\\tau_r = 11` down to small
 # values, planting user points at :math:`\\tau_r = \\tau_d = 10` (UZ1) and
-# at :math:`\\tau_r = 0.3` (UZ2). Each UZ then serves as the starting point
+# at :math:`\\tau_r = 0.1` (UZ2). Each UZ then serves as the starting point
 # for an :math:`\\bar\\eta` continuation in its own regime.
 
 tau_sols, tau_cont = ode.run(
@@ -102,411 +102,288 @@ tau_sols, tau_cont = ode.run(
     ICP='p/qif_biexp_sfa_op/tau_r',
     IPS=1, ILP=1, ISP=2, ISW=1, NTST=400, NCOL=4,
     NMX=5000, NPR=100, DS=-1e-3, DSMIN=1e-9, DSMAX=5e-2,
-    UZR={'p/qif_biexp_sfa_op/tau_r': [10.0, 0.3]},
-    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.1, 11.0]},
+    UZR={'p/qif_biexp_sfa_op/tau_r': [10.0, 0.1]},
+    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.05, 11.0]},
 )
 print(f"tau_r pre-scan bifurcations: {dict(tau_sols['bifurcation'].value_counts())}")
 
 # %%
-# Step 3: 1D :math:`\\bar\\eta` scan at :math:`\\tau_r = \\tau_d = 10` (UZ1)
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Shared bookkeeping
+# ^^^^^^^^^^^^^^^^^^
 #
-# A bidirectional equilibrium continuation in :math:`\bar\eta` sweeps
-# through the fold and Hopf bifurcations we'll feed into
-# :func:`codim2_search` next.
+# We run the same analysis pipeline at two values of :math:`\\tau_r`
+# (Steps 3-4 and 5-6 below), so it pays to factor the codim-1 / codim-2
+# bookkeeping into a small helper. ``codim1_points`` lists the four
+# starting points we expect on every :math:`\\bar\\eta` scan (the model
+# has two folds and two Hopfs in the parameter regime we're exploring);
+# ``CURVE_COLORS`` keys colours by bifurcation type so the codim-2
+# diagrams collapse their legends to two entries even though we draw
+# eight curves.
 
-eta_sols, eta_cont = ode.run(
-    origin='tau_r_branch', starting_point='UZ1', name='eta_branch',
-    ICP='p/qif_biexp_sfa_op/eta', bidirectional=True,
-    RL0=-8.0, RL1=2.0,
-    IPS=1, ILP=1, ISP=2, ISW=1, NTST=400, NCOL=4,
-    NMX=2000, NPR=10,
-    DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
-    ITMX=40, ITNW=40, NWTN=12,
-)
-print("bifurcations on the eta branch (tau_r=10):")
-print(eta_sols['bifurcation'].value_counts())
-
-# Also branch-switch to the LC born at HB2 of this branch so we have an
-# LC continuation at tau_r=10 to overlay on the combined 1D diagram below
-# (drawn alongside the LC at tau_r=0.3 from Step 6 for comparison).
-lc_eq_sols, lc_eq_cont = ode.run(
-    origin='eta_branch', starting_point='HB2', name='lc_branch',
-    IPS=2, ISP=2, ISW=-1,
-    ICP=['p/qif_biexp_sfa_op/eta', 11],
-    NMX=400, NPR=10, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
-    bidirectional=True, get_period=True,
-)
-print(f"LC at tau_r=10 bifurcations: {dict(lc_eq_sols['bifurcation'].value_counts())}")
-
-# %%
-# The 1D scan should report two Hopf bifurcations (``HB1``, ``HB2``) and
-# two fold bifurcations (``LP1``, ``LP2``) flanking the bistable / Hopf
-# regime. Those are the codim-1 starting points for the codim-2 search.
-
-# %%
-# Step 4: Codim-2 fold and Hopf curves in :math:`(\bar\eta,\, \Delta)`
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#
-# :func:`codim2_search` takes a list of codim-1 labels on ``origin`` and
-# runs a 2-parameter continuation of each. We run three separate searches
-# so each codim-1 starting point lands in its own continuation key and we
-# can colour the resulting curves distinctly on the bifurcation diagram
-# below.
-#
-# ``max_recursion_depth=0`` disables the recursive sub-continuations the
-# helper would otherwise run at each detected codim-2 point — keeps the
-# output dict flat (one continuation per starting label) and the figure
-# tractable. Pass ``max_recursion_depth=1`` (or more) if you want the
-# helper to also explore the codim-1 branches emerging from each codim-2
-# point.
-#
-# ``codim2_search`` defaults to ``get_stability=False`` for 2-parameter
-# codim-1 continuations: per-point stability flags on a *curve of
-# bifurcations* aren't meaningful (the equilibrium is degenerate by
-# construction along the whole curve) and would otherwise toggle on
-# numerical noise.
-
-# We run two unidirectional continuations per codim-1 starting point —
-# `DS=+1e-3` (forward) and `DS=-1e-3` (reverse) — rather than a single
-# bidirectional one. Bidirectional continuation can get stuck bouncing at
-# the cusp adjacent to LP1 / LP2; explicit per-direction calls give us
-# clean traces in both directions for every starting point and let us
-# stop each direction at a sensible Delta boundary via ``UZSTOP``.
-#
-# ``NPR=10`` records points every 10 continuation steps — dense enough
-# that the resulting curves render as real lines (rather than a handful
-# of sparsely sampled points) in the bifurcation diagram below.
-
-shared = dict(
-    pyauto_instance=ode,
-    params=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
-    origin=eta_cont,
-    max_recursion_depth=0,
-    NMX=1500, NPR=10,
-    DSMIN=1e-9, DSMAX=5e-2,
-    RL0=-15.0, RL1=5.0,
-    bidirectional=False,
-    UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 4.0]},
-)
-
-# (starting_point, bifurcation type) — bifurcation type is used below to
-# pick the curve colour and the codim-1 markers to ignore.
 codim1_points = [
     ('LP1', 'fold'),
     ('LP2', 'fold'),
     ('HB1', 'Hopf'),
     ('HB2', 'Hopf'),
 ]
-
-# Run forward + reverse from each codim-1 point; collect (key, type)
-# pairs for the plot loop further down.
-codim2_curves = []  # list of (continuation key, 'fold' | 'Hopf')
-for sp, bif_type in codim1_points:
-    for ds in (1e-3, -1e-3):
-        try:
-            result = codim2_search(
-                starting_points=[sp], DS=ds,
-                name=f'{sp}_ds{"pos" if ds > 0 else "neg"}',
-                **shared,
-            )
-            codim2_curves.append((list(result.keys())[0], bif_type))
-        except Exception as exc:
-            print(f"{sp} DS={ds:+g}: skipped ({type(exc).__name__}: {exc})")
-
-# Quick summary of what was detected per curve.
-print("\ncodim-2 curves recorded:")
-for key, bif_type in codim2_curves:
-    bif_counts = ode.get_summary(key)['bifurcation'].value_counts()
-    print(f"  {key} ({bif_type}): {dict(bif_counts)}")
-
-# %%
-# Across the eight codim-2 continuations you should see ``CP`` (cusp)
-# points on the fold curves emerging from ``LP1`` / ``LP2``, ``BT``
-# (Bogdanov-Takens) where the fold curve and the Hopf curve from ``HB1``
-# meet, and ``GH`` (generalised Hopf / Bautin) on the Hopf curve from
-# ``HB2``. These are the three codim-2 phenomena most relevant for this
-# model in the :math:`(\bar\eta,\, \Delta)` plane.
-
-# %%
-# Step 5: Plot the codim-2 bifurcation diagram
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#
-# All fold curves share one colour (blue), all Hopf curves another
-# (orange) — so the legend collapses to two entries even though we drew
-# eight continuations. Individual codim-1 starting points are identified
-# by labelled stars rather than separate legend entries.
-# ``ignore=['LP', 'HB', 'UZ']`` strips both the codim-1-self markers
-# (every point on a fold curve is an ``LP`` by construction, every point
-# on a Hopf curve an ``HB``; drawing them would clutter the diagram) and
-# user-defined ``UZ`` stop points which are not bifurcations.
-
 CURVE_COLORS = {'fold': '#1F77B4', 'Hopf': '#FF7F0E'}
+PD_COLOR = '#D62728'
+
+
+def run_codim2_in_delta(origin_name, name_prefix):
+    """Run the 8-call codim-2 search (LP1/LP2/HB1/HB2 × DS=±1e-3) in
+    :math:`(\\bar\\eta,\\, \\Delta)` and return ``[(key, bif_type)]``.
+    Forward + reverse continuations are kept separate (rather than one
+    bidirectional call) because bidirectional gets stuck bouncing at
+    the cusp adjacent to LP1 / LP2.
+    """
+    shared_kwargs = dict(
+        pyauto_instance=ode,
+        params=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
+        origin=origin_name,
+        max_recursion_depth=0,
+        NMX=1500, NPR=10,
+        DSMIN=1e-9, DSMAX=5e-2,
+        RL0=-15.0, RL1=5.0,
+        bidirectional=False,
+        UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 4.0]},
+    )
+    curves = []
+    for sp, bif_type in codim1_points:
+        for ds in (1e-3, -1e-3):
+            try:
+                result = codim2_search(
+                    starting_points=[sp], DS=ds,
+                    name=f'{name_prefix}_{sp}_{"pos" if ds > 0 else "neg"}',
+                    **shared_kwargs,
+                )
+                curves.append((list(result.keys())[0], bif_type))
+            except Exception as exc:
+                print(f"{name_prefix} {sp} DS={ds:+g}: skipped "
+                      f"({type(exc).__name__}: {exc})")
+    return curves
+
+
+def plot_2d_diagram(ax, codim2_curves, eta_origin, *, pd_names=(),
+                     title, xlim=(-6.0, 2.0), ylim=(0.0, 2.5)):
+    """Plot a 2D codim-2 diagram in :math:`(\\bar\\eta,\\, \\Delta)` from
+    the curves produced by :func:`run_codim2_in_delta`. Optionally overlay
+    one or more PD continuations (rendered in red). Fold curves all share
+    the blue colour, Hopf curves all share orange — so the legend has at
+    most three entries (fold curve, Hopf curve, PD curve)."""
+    labels_used = set()
+    for key, bif_type in codim2_curves:
+        color = CURVE_COLORS[bif_type]
+        label = f'{bif_type} curve' if bif_type not in labels_used else None
+        labels_used.add(bif_type)
+        ode.plot_continuation(
+            'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta',
+            cont=key, ax=ax,
+            line_color_stable=color, line_color_unstable=color,
+            line_style_stable='solid', line_style_unstable='solid',
+            bifurcation_legend=False, get_stability=False,
+            ignore=['LP', 'HB', 'UZ'], label=label,
+        )
+    for pd_name in pd_names:
+        label = 'PD curve' if 'PD' not in labels_used else None
+        labels_used.add('PD')
+        ode.plot_continuation(
+            'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta',
+            cont=pd_name, ax=ax,
+            line_color_stable=PD_COLOR, line_color_unstable=PD_COLOR,
+            line_style_stable='solid', line_style_unstable='solid',
+            bifurcation_legend=False, get_stability=False,
+            ignore=['PD', 'UZ'], label=label,
+        )
+    for sp, bif_type in codim1_points:
+        try:
+            sol, _, _ = ode.get_solution(point=sp, cont=eta_origin)
+            eta_p = float(sol['eta'])
+            delta_p = float(sol['Delta'])
+            ax.scatter(eta_p, delta_p, marker='*', s=120,
+                        c=CURVE_COLORS[bif_type],
+                        edgecolor='k', linewidth=0.5, zorder=10)
+            ax.annotate(sp, (eta_p, delta_p), xytext=(5, 5),
+                         textcoords='offset points', fontsize=9)
+        except Exception:
+            pass
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_xlabel(r'$\bar\eta$')
+    ax.set_ylabel(r'$\Delta$')
+    ax.set_title(title)
+    ax.legend(loc='best')
+
+
+def plot_1d_diagram(ax, eta_cont_name, lc_cont_name, *, title,
+                     xlim=(-8.0, 2.0)):
+    """Plot a 1D bifurcation diagram in :math:`(\\bar\\eta,\\, r)` with the
+    equilibrium branch (blue) and the limit cycle branch (orange) overlaid.
+    Codim-1 markers (HB / LP / PD) appear automatically; UZ / BP / EP are
+    filtered out as cosmetic noise."""
+    ode.plot_continuation(
+        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
+        cont=eta_cont_name, ax=ax,
+        line_color_stable='#1F77B4', line_color_unstable='#1F77B4',
+        bifurcation_legend=False, label='equilibrium branch',
+        ignore=['UZ', 'BP', 'EP'],
+    )
+    ode.plot_continuation(
+        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
+        cont=lc_cont_name, ax=ax,
+        line_color_stable='#FF7F0E', line_color_unstable='#FF7F0E',
+        bifurcation_legend=False, label='limit cycle branch',
+        ignore=['UZ', 'BP', 'EP'],
+    )
+    ax.set_xlim(*xlim)
+    ax.set_xlabel(r'$\bar\eta$')
+    ax.set_ylabel(r'$r$')
+    ax.set_title(title)
+    ax.legend(loc='best')
+
+# %%
+# Step 3: Continuation + codim-2 search at :math:`\\tau_r = \\tau_d = 10`
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+# This is the alpha-kernel-equivalent regime — clean codim-2 structure
+# (BT / GH / CP), no period doublings. A bidirectional :math:`\\bar\\eta`
+# scan from ``UZ1`` exposes the codim-1 starting points; we then
+# branch-switch to the limit cycle born at ``HB2`` and run
+# :func:`codim2_search` from each codim-1 point.
+
+eta_sols, eta_cont = ode.run(
+    origin='tau_r_branch', starting_point='UZ1', name='eta_branch',
+    ICP='p/qif_biexp_sfa_op/eta', bidirectional=True,
+    RL0=-8.0, RL1=2.0,
+    IPS=1, ILP=1, ISP=2, ISW=1, NTST=400, NCOL=4,
+    NMX=2000, NPR=10, DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
+    ITMX=40, ITNW=40, NWTN=12,
+)
+print("\neta scan (tau_r=10):", dict(eta_sols['bifurcation'].value_counts()))
+
+lc_sols, lc_cont = ode.run(
+    origin='eta_branch', starting_point='HB2', name='lc_branch',
+    IPS=2, ISP=2, ISW=-1,
+    ICP=['p/qif_biexp_sfa_op/eta', 11],
+    NMX=400, NPR=10, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
+    bidirectional=True, get_period=True,
+)
+print("LC (tau_r=10):", dict(lc_sols['bifurcation'].value_counts()))
+
+codim2_curves = run_codim2_in_delta('eta_branch', name_prefix='delta10')
+print("codim-2 curves at tau_r=10:")
+for key, bif_type in codim2_curves:
+    print(f"  {key} ({bif_type}): "
+          f"{dict(ode.get_summary(key)['bifurcation'].value_counts())}")
+
+# %%
+# Step 4: Figures at :math:`\\tau_r = 10`
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+# Two figures: a 1D bifurcation diagram in :math:`(\\bar\\eta,\\, r)` with
+# the equilibrium and limit-cycle branches overlaid, and a 2D codim-2
+# diagram in :math:`(\\bar\\eta,\\, \\Delta)` showing the BT / CP / GH
+# structure.
+
+fig, ax = plt.subplots(figsize=(7, 4.5))
+plot_1d_diagram(ax, 'eta_branch', 'lc_branch',
+                 title=r'1D bifurcation diagram, $\tau_r = 10$')
+plt.tight_layout()
+plt.show()
 
 fig, ax = plt.subplots(figsize=(7, 5))
-labels_used: set = set()
-for key, bif_type in codim2_curves:
-    color = CURVE_COLORS[bif_type]
-    label = f'{bif_type} curve' if bif_type not in labels_used else None
-    labels_used.add(bif_type)
-    ode.plot_continuation(
-        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta', cont=key, ax=ax,
-        line_color_stable=color, line_color_unstable=color,
-        line_style_stable='solid', line_style_unstable='solid',
-        bifurcation_legend=False, get_stability=False,
-        ignore=['LP', 'HB', 'UZ'], label=label,
-    )
-
-# Mark the original 1D HB / LP locations with labelled stars so the
-# reader can trace each codim-2 curve back to its starting codim-1
-# bifurcation visually (without polluting the legend).
-for sp, bif_type in codim1_points:
-    sol, _, _ = ode.get_solution(point=sp, cont='eta_branch')
-    eta_p = float(sol['eta'])
-    delta_p = float(sol['Delta'])
-    ax.scatter(eta_p, delta_p, marker='*', s=120,
-                c=CURVE_COLORS[bif_type],
-                edgecolor='k', linewidth=0.5, zorder=10)
-    ax.annotate(sp, (eta_p, delta_p), xytext=(5, 5),
-                 textcoords='offset points', fontsize=9)
-
-# Restrict the y-axis to the physically meaningful region Delta >= 0
-# (Delta is a half-width-at-half-maximum and can't be negative). The
-# codim-2 continuations may briefly cross into Delta < 0 to detect the
-# BT point cleanly, but those segments are unphysical and hidden here.
-ax.set_xlim(-6.0, 2.0)
-ax.set_ylim(0.0, 2.5)
-ax.set_xlabel(r'$\bar\eta$')
-ax.set_ylabel(r'$\Delta$')
-ax.set_title(r'codim-2 bifurcation diagram in $(\bar\eta,\, \Delta)$')
-ax.legend(loc='best')
+plot_2d_diagram(ax, codim2_curves, 'eta_branch',
+                 title=r'codim-2 bifurcation diagram, $\tau_r = 10$')
 plt.tight_layout()
 plt.show()
 
 # %%
-# Reading the diagram:
+# Reading the 2D diagram:
 #
-# * Blue curves are fold (saddle-node) manifolds traced from ``LP1`` and
-#   ``LP2``, both directions each. The cusp (``CP``) where these
-#   collide marks the closing of the bistable wedge.
-# * Orange curves are Hopf manifolds traced from ``HB1`` and ``HB2``,
-#   both directions each. The ``BT`` (Bogdanov-Takens) point is where
-#   the Hopf curve from ``HB1`` meets the fold manifold — two fold
-#   branches pass through BT and one Hopf branch terminates at it
-#   (a homoclinic curve also emerges, but tracking it requires
-#   auto-07p's HomCont package, ``IPS=9``, and is left as a manual
-#   follow-up).
-# * The ``GH`` (generalised-Hopf / Bautin) points on the Hopf curve from
-#   ``HB2`` are where the first Lyapunov coefficient changes sign —
+# * Blue fold curves traced from ``LP1`` / ``LP2``, both directions
+#   each. The cusp ``CP`` where these collide marks the closing of the
+#   bistable wedge.
+# * Orange Hopf curves traced from ``HB1`` / ``HB2``. The ``BT``
+#   (Bogdanov-Takens) point is where the Hopf curve from ``HB1`` meets
+#   the fold manifold — two fold branches pass through BT and one Hopf
+#   branch terminates at it (a homoclinic curve also emerges from BT,
+#   but tracking it requires auto-07p's HomCont package ``IPS=9`` and
+#   is left as a manual follow-up).
+# * The ``GH`` (generalised-Hopf / Bautin) point on the Hopf curve from
+#   ``HB2`` is where the first Lyapunov coefficient changes sign —
 #   supercritical Hopfs on one side, subcritical on the other.
 
 # %%
-# Step 6: Period-doubling cascade at :math:`\\tau_r \\ll \\tau_d` (UZ2)
+# Step 5: Continuation + codim-2 + PD cascade at :math:`\\tau_r = 0.1`
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# Now we shift to the second regime planted in Step 2: the user point
-# ``UZ2`` at :math:`\\tau_r = 0.3 \\ll \\tau_d = 10`. Here the
-# adaptation kernel is far from the alpha-kernel limit and the model's
-# bifurcation structure changes — in particular, the limit cycle born
-# at the upper Hopf undergoes a period-doubling.
-#
-# Step 6a: a fresh :math:`\\bar\\eta` scan from ``UZ2`` finds the codim-1
-# Hopfs / folds at this new :math:`\\tau_r`.
+# Same pipeline at the second user point ``UZ2``, with the addition of
+# a :func:`continue_period_doubling_bf` call after the LC continuation —
+# at :math:`\\tau_r = 0.1 \\ll \\tau_d` the LC born at ``HB2`` carries
+# at least one period-doubling point.
 
 eta_lo_sols, eta_lo_cont = ode.run(
-    origin='tau_r_branch', starting_point='UZ2', name='eta_branch_tau03',
+    origin='tau_r_branch', starting_point='UZ2', name='eta_branch_lo',
     ICP='p/qif_biexp_sfa_op/eta', bidirectional=True,
     RL0=-8.0, RL1=2.0,
     IPS=1, ILP=1, ISP=2, ISW=1, NTST=400, NCOL=4,
-    NMX=2000, NPR=10,
-    DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
+    NMX=2000, NPR=10, DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
     ITMX=40, ITNW=40, NWTN=12,
 )
-print(f"\neta scan at tau_r=0.3: {dict(eta_lo_sols['bifurcation'].value_counts())}")
+print("\neta scan (tau_r=0.1):", dict(eta_lo_sols['bifurcation'].value_counts()))
 
-# Step 6b: branch-switch to the LC at HB2 (the upper Hopf) and continue
-# in :math:`\\bar\\eta`. PD points appear along this LC family when
-# :math:`\\tau_r \\ll \\tau_d`.
-lc_sols, lc_cont = ode.run(
-    origin='eta_branch_tau03', starting_point='HB2', name='lc_pd',
+lc_lo_sols, lc_lo_cont = ode.run(
+    origin='eta_branch_lo', starting_point='HB2', name='lc_branch_lo',
     IPS=2, ISP=2, ISW=-1,
     ICP=['p/qif_biexp_sfa_op/eta', 11],
     NMX=2000, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
     bidirectional=True, get_period=True,
 )
-print(f"LC bifurcations: {dict(lc_sols['bifurcation'].value_counts())}")
+print("LC (tau_r=0.1):", dict(lc_lo_sols['bifurcation'].value_counts()))
 
-# %%
-# The ``PD`` count in the LC summary tells you the cascade is in play.
-# :func:`continue_period_doubling_bf` traces each PD point as a codim-1
-# manifold in :math:`(\\bar\\eta,\\, \\tau_r)`, recursing through the
-# cascade up to ``max_iter`` levels deep.
-#
-# (``max_iter`` was previously a per-call iteration counter that only
-# fired once on entry; since PyCoBi 1.0.0 it bounds the *recursion depth*
-# of the cascade — the variable that actually prevents runaway recursion.
-# Names of successive continuations follow the ``pd_d{depth}_n{i}``
-# convention so parallel sub-cascades don't collide on shared labels.)
-#
-# Sub-runs that fail inside :func:`ODESystem.run` surface as
-# :class:`UserWarning` and the cascade continues with the remaining PD
-# points rather than aborting — useful when chasing a cascade that
-# eventually enters a chaotic regime where individual continuations may
-# fail to converge.
+codim2_curves_lo = run_codim2_in_delta('eta_branch_lo', name_prefix='delta01')
+print("codim-2 curves at tau_r=0.1:")
+for key, bif_type in codim2_curves_lo:
+    print(f"  {key} ({bif_type}): "
+          f"{dict(ode.get_summary(key)['bifurcation'].value_counts())}")
 
-pd_continuation_data = ode.results[ode.get_continuation('lc_pd').key]
+# Trace the PD locus in (eta, Delta) so it can be overlaid on the same
+# 2D diagram as the codim-2 curves above.
 pd_names, _ = continue_period_doubling_bf(
-    solution=pd_continuation_data,
-    continuation=lc_cont,
-    pyauto_instance=ode,
+    solution=ode.results[ode.get_continuation('lc_branch_lo').key],
+    continuation=lc_lo_cont, pyauto_instance=ode,
     max_iter=2, precision=3,
-    ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/tau_r'],
+    ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
     IPS=2, ISW=2, ISP=2,
     NMX=400, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
     RL0=-8.0, RL1=2.0,
-    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.05, 12.0]},
+    UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 5.0]},
 )
-print(f"PD continuations: {pd_names}")
+print("PD continuations:", pd_names)
 
 # %%
-# Step 7: Codim-2 fold and Hopf curves at :math:`\\tau_r = 0.3` in
-# :math:`(\\bar\\eta,\\, \\tau_r)`
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Step 6: Figures at :math:`\\tau_r = 0.1`
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# To contextualise the PD cascade we re-run the codim-2 search in the
-# :math:`(\\bar\\eta,\\, \\tau_r)` plane (rather than
-# :math:`(\\bar\\eta,\\, \\Delta)`) using the same per-curve pattern as in
-# Step 4 — eight unidirectional continuations from each codim-1 starting
-# point on ``eta_branch_tau03``. We then overlay the PD curve(s) from
-# Step 6 on top so the reader can see how the period-doubling locus sits
-# relative to the fold and Hopf manifolds.
+# Same recipe as Step 4 (1D + 2D in :math:`(\\bar\\eta,\\, \\Delta)`),
+# now with the PD point visible on the limit-cycle branch and the PD
+# locus overlaid in red on the 2D diagram.
 
-shared_taur = dict(
-    pyauto_instance=ode,
-    params=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/tau_r'],
-    origin='eta_branch_tau03',
-    max_recursion_depth=0,
-    NMX=2000, NPR=20,
-    DSMIN=1e-9, DSMAX=5e-2,
-    RL0=-8.0, RL1=2.0,
-    bidirectional=False,
-    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.05, 12.0]},
-)
-codim2_curves_taur = []  # (key, 'fold' | 'Hopf')
-for sp, bif_type in codim1_points:
-    for ds in (1e-3, -1e-3):
-        try:
-            result = codim2_search(
-                starting_points=[sp], DS=ds,
-                name=f'taur_{sp}_{"pos" if ds > 0 else "neg"}',
-                **shared_taur,
-            )
-            codim2_curves_taur.append((list(result.keys())[0], bif_type))
-        except Exception as exc:
-            print(f"taur {sp} DS={ds:+g}: skipped "
-                  f"({type(exc).__name__}: {exc})")
-
-print("\ncodim-2 curves in (eta, tau_r) at tau_r=0.3:")
-for key, bif_type in codim2_curves_taur:
-    bif_counts = ode.get_summary(key)['bifurcation'].value_counts()
-    print(f"  {key} ({bif_type}): {dict(bif_counts)}")
-
-# %%
-# Step 8: Combined codim-2 + PD bifurcation diagram in
-# :math:`(\\bar\\eta,\\, \\tau_r)`
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#
-# Same style as Step 5's :math:`(\\bar\\eta,\\, \\Delta)` figure: fold
-# curves blue, Hopf curves orange, the PD curve(s) in red, codim-2
-# marker types (BT, CP, GH, PD) drawn from the bifurcation styles,
-# starting codim-1 points overlaid as labelled stars.
-
-PD_COLOR = '#D62728'
+fig, ax = plt.subplots(figsize=(7, 4.5))
+plot_1d_diagram(ax, 'eta_branch_lo', 'lc_branch_lo',
+                 title=r'1D bifurcation diagram, $\tau_r = 0.1$')
+plt.tight_layout()
+plt.show()
 
 fig, ax = plt.subplots(figsize=(7, 5))
-labels_used: set = set()
-for key, bif_type in codim2_curves_taur:
-    color = CURVE_COLORS[bif_type]
-    label = f'{bif_type} curve' if bif_type not in labels_used else None
-    labels_used.add(bif_type)
-    ode.plot_continuation(
-        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/tau_r', cont=key, ax=ax,
-        line_color_stable=color, line_color_unstable=color,
-        line_style_stable='solid', line_style_unstable='solid',
-        bifurcation_legend=False, get_stability=False,
-        ignore=['LP', 'HB', 'UZ'], label=label,
-    )
-for pd_name in pd_names:
-    label = 'PD curve' if 'PD' not in labels_used else None
-    labels_used.add('PD')
-    ode.plot_continuation(
-        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/tau_r', cont=pd_name,
-        ax=ax,
-        line_color_stable=PD_COLOR, line_color_unstable=PD_COLOR,
-        line_style_stable='solid', line_style_unstable='solid',
-        bifurcation_legend=False, get_stability=False,
-        ignore=['PD', 'UZ'], label=label,
-    )
-
-# Stars for the 1D codim-1 starting points on `eta_branch_tau03`.
-for sp, bif_type in codim1_points:
-    try:
-        sol, _, _ = ode.get_solution(point=sp, cont='eta_branch_tau03')
-        eta_p = float(sol['eta'])
-        tau_p = float(sol['tau_r'])
-        ax.scatter(eta_p, tau_p, marker='*', s=120,
-                    c=CURVE_COLORS[bif_type],
-                    edgecolor='k', linewidth=0.5, zorder=10)
-        ax.annotate(sp, (eta_p, tau_p), xytext=(5, 5),
-                     textcoords='offset points', fontsize=9)
-    except Exception:
-        pass
-
-# tau_r is positive by construction; clip to that range and add a faint
-# reference line at the tau_r = 0.3 slice the LC + PD came from.
-ax.axhline(0.3, color='0.7', linewidth=0.5, linestyle=':')
-ax.set_xlim(-6.0, 2.0)
-ax.set_ylim(0.0, 12.0)
-ax.set_xlabel(r'$\bar\eta$')
-ax.set_ylabel(r'$\tau_r$')
-ax.set_title(r'codim-2 + PD bifurcation diagram in $(\bar\eta,\, \tau_r)$')
-ax.legend(loc='best')
+plot_2d_diagram(ax, codim2_curves_lo, 'eta_branch_lo',
+                 pd_names=pd_names,
+                 title=r'codim-2 + PD bifurcation diagram, $\tau_r = 0.1$')
 plt.tight_layout()
 plt.show()
 
 # %%
-# Step 9: Combined 1D bifurcation diagram (all :math:`\\bar\\eta` scans + LCs)
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#
-# Final overview figure overlaying every 1D :math:`\\bar\\eta` continuation
-# we ran — both equilibrium scans plus both limit-cycle branches —
-# on the same :math:`(\\bar\\eta,\\, r)` axes. The PD point on the
-# tau_r=0.3 LC shows up as the period-doubling marker on the green LC
-# curve.
-
-fig, ax = plt.subplots(figsize=(8, 5))
-for cont, color, label in [
-    ('eta_branch',       '#1F77B4', r'equilibria, $\tau_r = 10$'),
-    ('eta_branch_tau03', '#FF7F0E', r'equilibria, $\tau_r = 0.3$'),
-    ('lc_branch',        '#2CA02C', r'limit cycle, $\tau_r = 10$'),
-    ('lc_pd',            '#9467BD', r'limit cycle, $\tau_r = 0.3$'),
-]:
-    ode.plot_continuation(
-        'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r', cont=cont, ax=ax,
-        line_color_stable=color, line_color_unstable=color,
-        bifurcation_legend=False, label=label,
-        ignore=['UZ', 'BP', 'EP'],
-    )
-ax.set_xlim(-8.0, 2.0)
-ax.set_xlabel(r'$\bar\eta$')
-ax.set_ylabel(r'$r$')
-ax.set_title(r'1D bifurcation diagram in $\bar\eta$ (all continuations)')
-ax.legend(loc='best')
-plt.tight_layout()
-plt.show()
-
-# %%
-# Step 10: Failure modes and what to expect on unfamiliar models
+# Step 7: Failure modes and what to expect on unfamiliar models
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
 # Both helpers wrap a series of nested ``ODESystem.run`` calls. If any
@@ -519,7 +396,7 @@ plt.show()
 # use to override the default constants for that path.
 
 # %%
-# Step 11: Clean up
+# Step 8: Clean up
 # ^^^^^^^^^^^^^^^^
 
 ode.close_session(clear_files=True)
