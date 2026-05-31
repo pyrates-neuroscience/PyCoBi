@@ -1208,34 +1208,21 @@ def test_4_4_codim2_search_pyrates_path(auto_dir, tmp_path):
 
 def test_4_5_continue_period_doubling_bf_input_validation():
     """`continue_period_doubling_bf` raises a clear ValueError when the
-    required ``ICP=[param1, param2]`` kwarg is missing or malformed,
-    instead of failing later with a confusing KeyError from the inner
-    `kwargs['ICP']` access.
+    required ``icp`` argument is missing. Auto-07p needs a single 1D
+    continuation parameter; PAR(11) for the period is appended
+    automatically.
     """
-    # No ICP at all — the pre-1.0 version raised KeyError('ICP') from the
-    # `params = kwargs['ICP']` line; we now raise ValueError up front.
-    with raises(ValueError, match=r"requires ICP"):
+    with raises(ValueError, match=r"requires `icp`"):
         continue_period_doubling_bf(
-            solution={}, continuation=0, pyauto_instance=None,
-        )
-    # Wrong-shape ICP — must be 2-element list/tuple.
-    with raises(ValueError, match=r"length-2 list/tuple"):
-        continue_period_doubling_bf(
-            solution={}, continuation=0, pyauto_instance=None,
-            ICP='eta',  # bare string, not a 2-tuple
-        )
-    with raises(ValueError, match=r"length-2 list/tuple"):
-        continue_period_doubling_bf(
-            solution={}, continuation=0, pyauto_instance=None,
-            ICP=['eta'],  # single-element list
+            solution={}, continuation=0, pyauto_instance=None, icp=None,
         )
 
 
-def test_4_6_continue_period_doubling_bf_no_pds_terminates():
-    """When the input solution dict has no PD points, the function returns
-    an empty list and doesn't recurse / doesn't raise. Pins the early-exit
-    behaviour so users that point this at a non-PD curve get a clean
-    empty result rather than an iteration explosion.
+def test_4_6_continue_period_doubling_bf_no_pds_no_bp_terminates():
+    """When the input solution dict has neither PD nor BP points, the
+    function returns an empty list and doesn't run anything. Pins the
+    early-exit semantics so a non-cascade LC produces a clean empty
+    result rather than an error.
     """
     sols, ret_pyauto = continue_period_doubling_bf(
         solution={
@@ -1243,11 +1230,57 @@ def test_4_6_continue_period_doubling_bf_no_pds_terminates():
             2: {'bifurcation': 'HB1'},
             3: {'bifurcation': 'LP1'},
         },
-        continuation=0, pyauto_instance='sentinel',
-        ICP=['eta', 'Delta'],
+        continuation=0, pyauto_instance='sentinel', icp='eta',
     )
     assert sols == []
     assert ret_pyauto == 'sentinel'  # passthrough, no calls were made
+
+
+def test_4_6b_continue_period_doubling_bf_bp_fallback():
+    """When the LC has no PD but has a BP, the helper branch-switches
+    at the *first* BP. Verified via `_MockODESystem` — the helper makes
+    exactly one `.run` call with `starting_point='BP1'` and the
+    auto-07p PD-cascade switches (IPS=2, ISW=-1, ICP=[icp, 11]).
+    """
+    import pandas as _pd
+    mock = _MockODESystem(
+        run_returns=[(_pd.DataFrame({('bifurcation', ''): ['EP', 'EP']}),
+                      'cascade_step')],
+        extract_returns={},
+    )
+    sols, _ = continue_period_doubling_bf(
+        solution={1: {'bifurcation': 'BP1'},
+                  2: {'bifurcation': 'BP2'},  # only the FIRST BP is used
+                  3: {'bifurcation': 'EP'}},
+        continuation='origin_cont', pyauto_instance=mock, icp='eta',
+    )
+    assert sols == ['pd_d0_BP1']
+    assert len(mock.run_calls) == 1
+    call = mock.run_calls[0]
+    assert call['starting_point'] == 'BP1'
+    assert call['IPS'] == 2 and call['ISW'] == -1
+    assert call['ICP'] == ['eta', 11]
+
+
+def test_4_6c_continue_period_doubling_bf_pd_iteration_order():
+    """When the LC has multiple PDs, the helper branch-switches at every
+    PD in order. ``pd_count`` enumerates them 1-indexed so the auto-07p
+    label resolution matches.
+    """
+    import pandas as _pd
+    df_empty = _pd.DataFrame({('bifurcation', ''): ['EP']})
+    mock = _MockODESystem(
+        run_returns=[(df_empty, 'c1'), (df_empty, 'c2'), (df_empty, 'c3')],
+        extract_returns={},
+    )
+    sols, _ = continue_period_doubling_bf(
+        solution={1: {'bifurcation': 'PD1'},
+                  2: {'bifurcation': 'PD2'},
+                  3: {'bifurcation': 'PD3'}},
+        continuation='origin', pyauto_instance=mock, icp='eta',
+    )
+    assert sols == ['pd_d0_PD1', 'pd_d0_PD2', 'pd_d0_PD3']
+    assert [c['starting_point'] for c in mock.run_calls] == ['PD1', 'PD2', 'PD3']
 
 
 def test_4_7_continue_period_doubling_bf_depth_cap_warns():
@@ -1259,8 +1292,7 @@ def test_4_7_continue_period_doubling_bf_depth_cap_warns():
         _warnings.simplefilter("always")
         sols, _ = continue_period_doubling_bf(
             solution={1: {'bifurcation': 'PD1'}},
-            continuation=0, pyauto_instance=None,
-            ICP=['eta', 'Delta'],
+            continuation=0, pyauto_instance=None, icp='eta',
             max_iter=2, _depth=2,  # at the cap
         )
     assert sols == []

@@ -216,11 +216,13 @@ def plot_2d_diagram(ax, codim2_curves, eta_origin, *, pd_names=(),
 
 
 def plot_1d_diagram(ax, eta_cont_name, lc_cont_name, *, title,
-                     xlim=(-8.0, 2.0)):
+                     xlim=(-8.0, 2.0), cascade_names=()):
     """Plot a 1D bifurcation diagram in :math:`(\\bar\\eta,\\, r)` with the
-    equilibrium branch (blue) and the limit cycle branch (orange) overlaid.
-    Codim-1 markers (HB / LP / PD) appear automatically; UZ / BP / EP are
-    filtered out as cosmetic noise."""
+    equilibrium branch (blue), the limit cycle branch (orange), and
+    optionally a list of cascade LC continuations (red — each doubled
+    cycle from a PD branch switch) overlaid. Codim-1 markers (HB / LP /
+    PD) appear automatically; UZ / BP / EP are filtered out as cosmetic
+    noise."""
     ode.plot_continuation(
         'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
         cont=eta_cont_name, ax=ax,
@@ -235,6 +237,20 @@ def plot_1d_diagram(ax, eta_cont_name, lc_cont_name, *, title,
         bifurcation_legend=False, label='limit cycle branch',
         ignore=['UZ', 'BP', 'EP'],
     )
+    cascade_label_done = False
+    for cascade_name in cascade_names:
+        label = None if cascade_label_done else 'PD cascade LCs'
+        cascade_label_done = True
+        try:
+            ode.plot_continuation(
+                'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
+                cont=cascade_name, ax=ax,
+                line_color_stable=PD_COLOR, line_color_unstable=PD_COLOR,
+                bifurcation_legend=False, label=label,
+                ignore=['UZ', 'BP', 'EP'],
+            )
+        except Exception as exc:
+            print(f"  warning: could not plot cascade LC {cascade_name!r}: {exc}")
     ax.set_xlim(*xlim)
     ax.set_xlabel(r'$\bar\eta$')
     ax.set_ylabel(r'$r$')
@@ -347,38 +363,62 @@ for key, bif_type in codim2_curves_lo:
     print(f"  {key} ({bif_type}): "
           f"{dict(ode.get_summary(key)['bifurcation'].value_counts())}")
 
-# Trace the PD locus in (eta, Delta) so it can be overlaid on the same
-# 2D diagram as the codim-2 curves above.
-pd_names, _ = continue_period_doubling_bf(
-    solution=ode.results[ode.get_continuation('lc_branch_lo').key],
-    continuation=lc_lo_cont, pyauto_instance=ode,
-    max_iter=3, precision=4,
-    ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
-    IPS=2, ISW=2, ISP=2,
-    NMX=400, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
-    RL0=-8.0, RL1=2.0,
-    UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 5.0]},
+# Trace the locus of the *first PD point* on the LC in (eta, Delta), the
+# same way we'd trace any other codim-1 manifold — `codim2_search` treats
+# PD as a codim-1 starting point when `periodic=True` (so ICP gets PAR(11)
+# appended for the period). This gives the red PD curve in the 2D diagram.
+pd_locus = codim2_search(
+    pyauto_instance=ode,
+    params=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
+    starting_points=['PD1'], origin='lc_branch_lo',
+    max_recursion_depth=0,
+    periodic=True,
+    NMX=1500, NPR=20,
+    DSMIN=1e-9, DSMAX=5e-2,
+    bidirectional=True,
+    UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 4.0]},
+    name='pd_locus',
 )
-print("PD continuations:", pd_names)
+print("PD-locus continuations:", list(pd_locus.keys()))
+
+# Chase the period-doubling cascade itself with the dedicated helper.
+# Unlike `codim2_search` (which traces a locus in 2 params), this one
+# does the auto-07p "branch-switch onto each new doubled LC and repeat"
+# workflow — same recipe as the c.lor.2 / c.lor.3 manual cascade in
+# auto-07p's lor demo. Each cascade step is a separate 1-parameter LC
+# continuation in `eta` (with PAR(11) for the doubled period).
+cascade_names, _ = continue_period_doubling_bf(
+    solution=ode.results[ode.get_continuation('lc_branch_lo').key],
+    continuation=lc_lo_cont,
+    pyauto_instance=ode,
+    icp='p/qif_biexp_sfa_op/eta',
+    max_iter=4,
+    NMX=2000, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
+    STOP=["BP3", "LP5"],
+)
+print("PD cascade LCs:", cascade_names)
 
 # %%
 # Step 6: Figures at :math:`\\tau_r = 0.1`
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# Same recipe as Step 4 (1D + 2D in :math:`(\\bar\\eta,\\, \\Delta)`),
-# now with the PD point visible on the limit-cycle branch and the PD
-# locus overlaid in red on the 2D diagram.
+# Same shape as Step 4. The 1D diagram now overlays each LC born along
+# the PD cascade (each doubled cycle is its own continuation in eta).
+# The 2D diagram overlays the PD locus from :func:`codim2_search` on the
+# usual codim-2 backbone.
 
 fig, ax = plt.subplots(figsize=(7, 4.5))
 plot_1d_diagram(ax, 'eta_branch_lo', 'lc_branch_lo',
-                 title=r'1D bifurcation diagram, $\tau_r = 0.1$')
+                 title=r'1D bifurcation diagram, $\tau_r = 0.1$',
+                 cascade_names=cascade_names)
 plt.tight_layout()
 plt.show()
 
 fig, ax = plt.subplots(figsize=(7, 5))
 plot_2d_diagram(ax, codim2_curves_lo, 'eta_branch_lo',
-                 pd_names=pd_names,
-                 title=r'codim-2 + PD bifurcation diagram, $\tau_r = 0.1$')
+                 pd_names=list(pd_locus.keys()),
+                 title=r'codim-2 + PD-locus bifurcation diagram, '
+                       r'$\tau_r = 0.1$')
 plt.tight_layout()
 plt.show()
 

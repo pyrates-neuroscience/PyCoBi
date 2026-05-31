@@ -60,53 +60,96 @@ def _bif_series_contains(series, code: str) -> bool:
     return bool(series.astype(str).str.contains(code, na=False).any())
 
 
-def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, Any],
-                                pyauto_instance: ODESystem,
-                                max_iter: int = 1000, precision: int = 3,
-                                _depth: int = 0, _pds: list = None,
-                                **kwargs) -> tuple:
-    """Recursively follow a period-doubling cascade in 2 parameters.
+def _iter_bifurcation_labels(solution):
+    """Yield ``(point_id, bifurcation_label_str)`` from a solution dict
+    *or* the pandas DataFrame that ``ode.results[cont_key]`` returns.
 
-    For every ``PD`` (period-doubling) label on ``solution``, start a new
-    continuation from it (forwarded to ``pyauto_instance.run`` with
-    ``**kwargs``), inspect the resulting curve for further PD points, and
-    recurse — bounded by ``max_iter`` recursion depth to prevent runaway
-    cascades on chaotic models.
+    Iterating a DataFrame's ``.items()`` walks columns not rows, so a
+    literal-dict iteration would silently miss every label when called
+    with a DataFrame. Both forms are handled transparently here.
+    """
+    try:
+        import pandas as _pd
+        is_df = isinstance(solution, _pd.DataFrame)
+    except ImportError:
+        is_df = False
+    if is_df:
+        col = solution[('bifurcation', '')] if ('bifurcation', '') in solution.columns \
+            else solution['bifurcation']
+        for idx, val in col.items():
+            yield idx, str(val)
+    else:
+        for idx, info in solution.items():
+            if isinstance(info, dict):
+                yield idx, str(info.get('bifurcation', ''))
+
+
+def continue_period_doubling_bf(solution, continuation: Union[str, int, Any],
+                                pyauto_instance: ODESystem, icp,
+                                max_iter: int = 1000,
+                                _depth: int = 0,
+                                **run_kwargs) -> tuple:
+    """Chase a cascade of period-doubling bifurcations on a limit cycle.
+
+    Given a limit-cycle continuation with at least one ``PD`` (or ``BP``
+    as a fallback when no PD exists), branch-switch onto the new limit
+    cycle at each PD/BP point and recurse on the resulting branch — the
+    classic auto-07p PD-cascade workflow (see e.g. the ``lor`` demo,
+    where successive runs of ``c.lor.2`` / ``c.lor.3`` branch-switch
+    at PD1, PD2, ... to track the period-doubling route to chaos).
+
+    The continuation parameters and switches are fixed by the PD-cascade
+    semantics: ``IPS=2`` (LC), ``ISW=-1`` (branch switch onto the new
+    limit cycle), ``ICP=[icp, 11]`` (the user-supplied 1D parameter
+    plus ``PAR(11)`` for the period). Anything else (NMX, NPR, NTST,
+    DS, DSMIN/DSMAX, UZSTOP, ...) is forwarded via ``**run_kwargs``.
+
+    Branching rules:
+
+    * If the input LC has at least one ``PD`` label, branch-switch at
+      *every* PD on the input.
+    * If the input has no PD but at least one ``BP``, branch-switch at
+      the *first* BP only. The cascade is then continued only as long
+      as a subsequent LC carries a ``PD`` (a BP-only continuation
+      doesn't extend, to avoid infinite BP→BP recursion).
+    * If neither PD nor BP is present, return an empty list.
+
+    Recursion termination (per :ref:`PyCoBi 1.0.x spec`):
+
+    * Branch-switched at a **PD**: recurse if the new LC has a new PD
+      *or* a new BP.
+    * Branch-switched at a **BP**: recurse only if the new LC has a new
+      PD (a new BP alone is not enough).
 
     Parameters
     ----------
     solution
-        The previous continuation's solution dictionary (mapping point key
-        to ``{'bifurcation': ..., ...}``).
+        Summary of the LC continuation to inspect — either the
+        ``pandas.DataFrame`` returned by ``ode.results[cont_key]`` or a
+        literal ``{point_id: {'bifurcation': str}}`` dict (tests).
     continuation
-        Origin key of the parent continuation, forwarded to
-        ``run(origin=)``.
+        The LC continuation key used as ``origin`` for the branch-switch.
     pyauto_instance
-        The active ``ODESystem`` instance.
+        Active ``ODESystem``.
+    icp
+        The single 1D continuation parameter (int PAR index or string
+        name). Auto-07p needs ``ICP=[icp, 11]`` for LC continuation; the
+        period (PAR 11) is appended automatically.
     max_iter
-        Maximum recursion depth. Default 1000. Semantics changed in 1.0.0
-        from per-call iteration count to recursion depth, which actually
-        bounds runaway cascades.
-    precision
-        Decimal places used to dedupe already-visited PD points (so the
-        same PD point at slightly different floating-point coordinates
-        across sibling branches doesn't trigger infinite recursion).
-    kwargs
-        Remaining keyword arguments forwarded to ``pyauto_instance.run``.
-        Must include ``ICP=[param1, param2]`` (two continuation parameters).
-        Each entry may be an int auto-07p PAR index or a string name (the
-        latter resolved via the active ``c.*`` ``parnames`` declaration).
+        Maximum recursion depth. Default 1000 (effectively unbounded).
+    run_kwargs
+        Forwarded to :meth:`ODESystem.run` for each LC continuation step.
+        Common keys: ``NMX``, ``NPR``, ``NTST``, ``DS``, ``DSMIN``,
+        ``DSMAX``, ``UZSTOP``.
 
     Returns
     -------
     tuple
         ``(continuation_names, pyauto_instance)``. ``continuation_names``
-        lists the names registered on ``pyauto_instance`` for each PD
-        continuation that was performed, in execution order, including
-        recursive sub-cascades.
+        lists every LC continuation registered along the cascade, in
+        depth-first execution order. Each step's continuation is named
+        ``pd_d{depth}_{label}`` (e.g. ``pd_d0_PD1``, ``pd_d1_PD1``, …).
     """
-    if _pds is None:
-        _pds = []
     if _depth >= max_iter:
         warnings.warn(
             f"continue_period_doubling_bf: reached max_iter={max_iter} recursion "
@@ -116,80 +159,63 @@ def continue_period_doubling_bf(solution: dict, continuation: Union[str, int, An
         )
         return [], pyauto_instance
 
-    if 'ICP' not in kwargs:
+    if icp is None:
         raise ValueError(
-            "continue_period_doubling_bf requires ICP=[param1, param2] in **kwargs"
+            "continue_period_doubling_bf requires `icp` (the 1D continuation "
+            "parameter); PAR(11) for the period is appended automatically."
         )
-    params = kwargs['ICP']
-    if not (isinstance(params, (list, tuple)) and len(params) == 2):
-        raise ValueError(
-            f"continue_period_doubling_bf requires ICP to be a length-2 list/tuple; "
-            f"got {params!r}"
-        )
-    param_cols = [_resolve_param_for_extract(pyauto_instance, p) for p in params]
+
+    # Decide which labels to branch-switch at: every PD if any exist,
+    # otherwise the first BP (fallback). If neither, nothing to do.
+    pd_labels = [label for _, label in _iter_bifurcation_labels(solution)
+                 if 'PD' in label]
+    if pd_labels:
+        targets = [(f'PD{i + 1}', 'PD') for i in range(len(pd_labels))]
+    else:
+        bp_labels = [label for _, label in _iter_bifurcation_labels(solution)
+                     if 'BP' in label]
+        if not bp_labels:
+            return [], pyauto_instance
+        targets = [('BP1', 'BP')]
 
     solutions: list = []
-    pd_count = 0  # auto-07p uses 1-indexed PD labels
-
-    # Normalise `solution` to an iterable of (point_id, {'bifurcation': str})
-    # mappings. PyCoBi's ``ode.results[cont_key]`` returns a pandas DataFrame
-    # whose rows are the labelled points and whose ``('bifurcation', '')``
-    # column carries the labels; iterating that DataFrame's ``.items()``
-    # walks COLUMNS not rows, so the original literal-dict iteration silently
-    # missed every PD label. Handle both forms transparently.
-    try:
-        import pandas as _pd
-        is_df = isinstance(solution, _pd.DataFrame)
-    except ImportError:
-        is_df = False
-    if is_df:
-        bif_col = solution[('bifurcation', '')] if ('bifurcation', '') in solution.columns \
-            else solution['bifurcation']
-        iterable = ((idx, {'bifurcation': str(bif)}) for idx, bif in bif_col.items())
-    else:
-        iterable = solution.items()
-
-    for _, point_info in iterable:
-        if 'PD' not in point_info.get('bifurcation', ''):
-            continue
-        pd_count += 1
-        name = f'pd_d{_depth}_n{pd_count}'
-
+    for sp, sp_type in targets:
+        name = f'pd_d{_depth}_{sp}'
         try:
             s_tmp, cont = pyauto_instance.run(
-                starting_point=f'PD{pd_count}', name=name,
-                origin=continuation, **kwargs,
+                origin=continuation, starting_point=sp, name=name,
+                IPS=2, ISW=-1, ISP=2,
+                ICP=[icp, 11],
+                **run_kwargs,
             )
         except Exception as exc:
             warnings.warn(
-                f"continue_period_doubling_bf: PD{pd_count} continuation failed "
+                f"continue_period_doubling_bf: branch switch at {sp} failed "
                 f"({type(exc).__name__}: {exc}); skipping this branch.",
                 UserWarning, stacklevel=2,
             )
             continue
         solutions.append(name)
 
-        try:
-            bfs, _ = pyauto_instance.extract(['bifurcation'] + param_cols, cont=cont)
-        except KeyError as exc:
-            warnings.warn(
-                f"continue_period_doubling_bf: could not extract bifurcation "
-                f"summary for {name!r} ({exc}); skipping recursion on this branch.",
-                UserWarning, stacklevel=2,
-            )
+        # Decide whether to recurse based on the per-spec branching rules:
+        # PD-started → recurse on new PD OR new BP.
+        # BP-started → recurse only on new PD.
+        new_labels = [label for _, label in _iter_bifurcation_labels(s_tmp)]
+        has_new_pd = any('PD' in lbl for lbl in new_labels)
+        has_new_bp = any('BP' in lbl for lbl in new_labels)
+        if sp_type == 'PD':
+            should_recurse = has_new_pd or has_new_bp
+        else:  # 'BP'
+            should_recurse = has_new_pd
+        if not should_recurse:
             continue
-
-        for bf, p1, p2 in bfs.itertuples(index=False, name=None):
-            param_pos = (round(float(p1), precision), round(float(p2), precision))
-            if 'PD' in str(bf) and param_pos not in _pds:
-                _pds.append(param_pos)
-                sub_sols, _ = continue_period_doubling_bf(
-                    solution=s_tmp, continuation=cont,
-                    pyauto_instance=pyauto_instance,
-                    max_iter=max_iter, precision=precision,
-                    _depth=_depth + 1, _pds=_pds, **kwargs,
-                )
-                solutions.extend(sub_sols)
+        sub_sols, _ = continue_period_doubling_bf(
+            solution=s_tmp, continuation=cont,
+            pyauto_instance=pyauto_instance, icp=icp,
+            max_iter=max_iter, _depth=_depth + 1,
+            **run_kwargs,
+        )
+        solutions.extend(sub_sols)
 
     return solutions, pyauto_instance
 
