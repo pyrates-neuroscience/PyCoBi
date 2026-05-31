@@ -4,6 +4,102 @@ Changelog
 1.0
 ---
 
+1.0.2
+~~~~~
+
+Documentation-focused patch release: the codim-2 and visualization
+gallery examples were substantially rewritten to align with the 1.0.x
+spec for the automated-continuation helpers, plus a handful of
+underlying bug fixes that the rewrites surfaced.
+
+Automated-continuation helpers
+''''''''''''''''''''''''''''''
+
+- :code:`continue_period_doubling_bf` was restructured to match the
+  auto-07p PD-cascade workflow (the lor-demo recipe of c.lor.2 /
+  c.lor.3). The new signature takes a single :code:`icp` parameter
+  (PAR(11) for the period is appended automatically) and hardcodes
+  :code:`IPS=2, ISW=-1, ISP=2, ICP=[icp, 11]` — branch-switches onto
+  each new doubled limit cycle at every PD label on the input LC and
+  recurses on PD/BP labels of the resulting branch. Falls back to the
+  first BP if no PD exists. Pre-1.0.2 the helper just forwarded
+  :code:`**kwargs` to :code:`ODESystem.run`, so the user had to choose
+  the cascade vs. 2-param-locus mode via :code:`ISW` themselves — and
+  the gallery example was using ISW=2 (the 2-param PD-locus path)
+  rather than the cascade. Verified end-to-end on auto-07p's lor demo:
+  initial LC finds PD1 → doubled LC with PD2 → quadrupled LC with PD3,
+  matching the period doublings the demo's three manual c.* configs
+  trace.
+- :code:`continue_period_doubling_bf`'s recursion termination follows
+  the spec: PD-started branches recurse on new PD *or* BP; BP-started
+  branches recurse only on new PD (BP-only doesn't extend, avoiding
+  infinite BP→BP loops).
+- :code:`codim2_search` now defaults to :code:`get_stability=False`
+  on the 2-parameter codim-1 continuations (a continuation that
+  *tracks* a codim-1 manifold is itself a curve of bifurcations, so
+  per-point stability flags are meaningless) and uses :code:`ILP=1` so
+  fold-on-curve detection picks up CP / BT codim-2 points. Both
+  changes were already in 1.0.1 but are documented here for the first
+  time. Bidirectional is now :code:`setdefault`-overridable.
+- :code:`codim2_search` recursion handles ZH / GH / BT codim-2 types
+  with type-specific 1D switch-and-continue moves (see the function's
+  docstring for the exact :code:`IPS` / :code:`ISW` / :code:`ICP`
+  recipes per type). PD-as-starting-point traces a PD locus when
+  :code:`periodic=True` (PAR(11) appended to ICP).
+
+Visualization
+'''''''''''''
+
+- :code:`plot_timeseries` now correctly handles LC continuations where
+  the :code:`('time', '')` column stores one ndarray per row (the
+  per-period sampling). The pre-1.0.2 code passed a length-1
+  wrapper Series straight through :code:`np.atleast_1d().squeeze()`,
+  producing a 0-d object array that mismatched the per-period state
+  samples on the y-axis. New :code:`_unwrap_per_period` helper strips
+  the wrapper when present.
+- :code:`_get_3d_line_collection` (used by
+  :code:`plot_trajectory(variables=[x, y, z])`) now coerces inputs to
+  :code:`float` upfront. Pandas Series sliced out of an LC summary
+  row inherit :code:`object` dtype (the parent row mixes scalar and
+  ndarray columns), which propagated through :code:`np.reshape` and
+  then tripped matplotlib's :code:`set_array` colormap path with a
+  :code:`dtype object cannot be converted to float` error.
+
+Documentation: new use-example structure
+''''''''''''''''''''''''''''''''''''''''
+
+- :code:`documentation/use_examples/automated_continuation.py` was
+  rewritten as two parallel sections (one per :math:`\\tau_r` value)
+  on the bi-exponential QIF-SFA model. Each section produces a 1D
+  bifurcation diagram in :math:`(\\bar\\eta,\\, r)` and a 2D codim-2
+  diagram in :math:`(\\bar\\eta,\\, \\Delta)`; the second section
+  (:math:`\\tau_r = 0.1`) adds a PD locus from :code:`codim2_search`
+  and a PD cascade from :code:`continue_period_doubling_bf`, with the
+  cascade LCs overlaid on the 1D figure and the PD locus on the 2D
+  figure. Demonstrates the helpers' division of labour clearly:
+  :code:`codim2_search` traces a manifold; :code:`continue_period_doubling_bf`
+  chases a cascade.
+- :code:`documentation/use_examples/visualization_tools.py` was
+  rewritten in the same Sphinx-gallery style as the codim-2 example
+  and now demonstrates *all* five of PyCoBi's plot methods plus the
+  per-marker style hook (six figures total): :code:`plot_continuation`
+  on its own, :code:`plot_continuation_grid` for a four-panel
+  comparison, :code:`plot_bifurcation_points` for a custom-marker
+  overlay, :code:`plot_timeseries` for :math:`r(t)` at multiple LC
+  labels, and :code:`plot_trajectory` in both 2D and 3D (the latter
+  with the 1.0.0 :code:`colorbar=True` feature). A Step 7 page on
+  :code:`update_bifurcation_style` covers the persistent-marker
+  override.
+- :code:`documentation/use_examples/fhn.py` extended to trace the
+  limit cycle born at HB1 and time the analytical vs. finite-
+  difference Jacobian comparison on the LC continuation (where the
+  BVP system is dimension :math:`NTST \\times NCOL \\times NDIM`)
+  rather than on the equilibrium scan. The speed-up on the 2D FHN
+  is honestly modest, framed inline with the :math:`O(\\text{NDIM}^2)`
+  finite-difference scaling argument for context.
+
+Test counts: 47 (1.0.0: 45, 1.0.1: 45, 1.0.2: 47).
+
 1.0.1
 ~~~~~
 
