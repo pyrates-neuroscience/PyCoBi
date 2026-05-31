@@ -103,7 +103,7 @@ tau_sols, tau_cont = ode.run(
     IPS=1, ILP=1, ISP=2, ISW=1, NTST=400, NCOL=4,
     NMX=5000, NPR=100, DS=-1e-3, DSMIN=1e-9, DSMAX=5e-2,
     UZR={'p/qif_biexp_sfa_op/tau_r': [10.0, 0.1]},
-    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.05, 11.0]},
+    UZSTOP={'p/qif_biexp_sfa_op/tau_r': [0.01, 10.0]},
 )
 print(f"tau_r pre-scan bifurcations: {dict(tau_sols['bifurcation'].value_counts())}")
 
@@ -265,8 +265,8 @@ lc_sols, lc_cont = ode.run(
     origin='eta_branch', starting_point='HB2', name='lc_branch',
     IPS=2, ISP=2, ISW=-1,
     ICP=['p/qif_biexp_sfa_op/eta', 11],
-    NMX=400, NPR=10, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
-    bidirectional=True, get_period=True,
+    NMX=2000, NPR=10, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
+    bidirectional=True, get_period=True, STOP=["BP3", "LP5"]
 )
 print("LC (tau_r=10):", dict(lc_sols['bifurcation'].value_counts()))
 
@@ -337,7 +337,7 @@ lc_lo_sols, lc_lo_cont = ode.run(
     IPS=2, ISP=2, ISW=-1,
     ICP=['p/qif_biexp_sfa_op/eta', 11],
     NMX=2000, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
-    bidirectional=True, get_period=True,
+    bidirectional=True, get_period=True, STOP=["BP3", "LP5"]
 )
 print("LC (tau_r=0.1):", dict(lc_lo_sols['bifurcation'].value_counts()))
 
@@ -352,7 +352,7 @@ for key, bif_type in codim2_curves_lo:
 pd_names, _ = continue_period_doubling_bf(
     solution=ode.results[ode.get_continuation('lc_branch_lo').key],
     continuation=lc_lo_cont, pyauto_instance=ode,
-    max_iter=2, precision=3,
+    max_iter=3, precision=4,
     ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
     IPS=2, ISW=2, ISP=2,
     NMX=400, NPR=20, DS=1e-3, DSMIN=1e-9, DSMAX=5e-2,
