@@ -1371,9 +1371,20 @@ class ODESystem:
         # plot phase trajectory
         if not linespecs:
             linespecs = [dict() for _ in range(len(points))]
+
+        def _unwrap_per_period(value):
+            """Pull out the per-period ndarray when pandas wrapped it in a
+            length-1 Series. The ``('time', '')`` column on an LC summary
+            stores one ndarray per labelled point (object-dtype), so
+            partial-indexing the row Series by ``'time'`` returns a Series
+            of length 1 containing the array rather than the array itself."""
+            if hasattr(value, 'iloc') and hasattr(value, '__len__') and len(value) == 1:
+                value = value.iloc[0]
+            return np.atleast_1d(value).squeeze()
+
         for i in range(len(points)):
-            time = np.atleast_1d(results[i][time_col]).squeeze()
-            y = np.atleast_1d(results[i][var_col]).squeeze()
+            time = _unwrap_per_period(results[i][time_col])
+            y = _unwrap_per_period(results[i][var_col])
             kwargs_tmp = dict(kwargs)
             kwargs_tmp.update(linespecs[i])
             line_col = self._get_line_collection(x=time, y=y, **kwargs_tmp)
@@ -1924,9 +1935,13 @@ class ODESystem:
         """
 
         # combine y and param vals
-        x = np.reshape(x, (x.squeeze().shape[0], 1))
-        y = np.reshape(y, (y.squeeze().shape[0], 1))
-        z = np.reshape(z, (z.squeeze().shape[0], 1))
+        # Coerce to float upfront. Pandas Series that came out of an LC
+        # summary row (rows mix scalar and ndarray columns) have ``object``
+        # dtype, which propagates through `np.reshape` and then trips
+        # `set_array` later when matplotlib tries to apply the colormap.
+        x = np.asarray(x, dtype=float).reshape(-1, 1)
+        y = np.asarray(y, dtype=float).reshape(-1, 1)
+        z = np.asarray(z, dtype=float).reshape(-1, 1)
         y = np.append(x, y, axis=1)
         y = np.append(y, z, axis=1)
 
