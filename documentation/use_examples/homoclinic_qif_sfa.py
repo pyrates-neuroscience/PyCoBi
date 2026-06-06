@@ -59,7 +59,7 @@ ode = ODESystem.from_yaml(
     auto_dir="~/PycharmProjects/auto-07p",
     node_vars={
         'p/qif_biexp_sfa_op/Delta': 2.0,
-        'p/qif_biexp_sfa_op/alpha': 0.8,
+        'p/qif_biexp_sfa_op/alpha': 0.7,
         'p/qif_biexp_sfa_op/tau_r': 10.0,
         'p/qif_biexp_sfa_op/tau_d': 10.0,
         'p/qif_biexp_sfa_op/eta': -8.0,
@@ -90,12 +90,28 @@ print("eta scan:", dict(eta_sols['bifurcation'].value_counts()))
 # equilibrium.  We push the continuation hard (``NMX=5000``, very small
 # ``DSMIN``) to reach a high-period near-homoclinic profile that HomCont
 # can take over from.
+#
+# .. note::
+#    For limit-cycle continuations that span large periods, the auto-07p
+#    Newton tolerances (``EPSL``, ``EPSU``) and the bifurcation-detection
+#    tolerance (``EPSS``) need to be tightened relative to the global
+#    defaults — otherwise the test functions used to flag ``LP`` /
+#    ``PD`` / ``BP`` along the LC become dominated by numerical noise
+#    and produce *spurious* bifurcations (the tell-tale symptom: an
+#    ``LP`` is detected but the ``stability`` column doesn't flip
+#    around it).  PyCoBi's ``'lc'`` scenario already ships with
+#    ``EPSL = EPSU = 1e-7`` and ``EPSS = 1e-5`` by default; for this
+#    high-period run we tighten one more step to ``1e-8`` / ``1e-6``
+#    and use ``NTST=200`` (vs the default 50) to give the BVP mesh
+#    enough resolution to capture the sharp homoclinic spike.
 
 lc_sols, _ = ode.run(
     starting_point='HB2', name='lc_branch',
     c='lc', origin='eta_branch',
     ICP=['p/qif_biexp_sfa_op/eta', 11],
-    NMX=5000, NPR=10, DS=1e-3, DSMIN=1e-12, DSMAX=5e-2,
+    NMX=8000, NPR=10, DS=1e-3, DSMIN=1e-12, DSMAX=5e-2,
+    EPSL=1e-8, EPSU=1e-8, EPSS=1e-6,
+    NTST=200, NCOL=4,
     bidirectional=False, get_period=True,
 )
 periods = np.asarray(lc_sols[('PAR(11)', '')], dtype=float)
