@@ -1133,6 +1133,22 @@ class ODESystem:
             path=str(Path(self.dir) / dat_basename), n_points=n_points,
         )
 
+        # Pull the seed orbit's parameter values out of the auto solution and
+        # forward them via the ``PAR={...}`` directive — without this,
+        # auto-07p falls back to STPNT defaults and Newton starts the
+        # homoclinic at the wrong point in parameter space (MX at step 2 in
+        # the typical failure mode).  We skip auto-07p's reserved slots
+        # PAR(11..14) since those carry the period / time / etc.
+        seed_sol, _, _ = self.get_solution(point=starting_point, cont=origin)
+        if hasattr(seed_sol, 'b') and isinstance(getattr(seed_sol, 'b', None), dict):
+            seed_sol = seed_sol.b['solution']
+        par_values = np.asarray(seed_sol.PAR, dtype=float)
+        seed_pars = {i + 1: float(par_values[i])
+                     for i in range(len(par_values))
+                     if not (10 <= i + 1 <= 14) and par_values[i] != 0.0}
+        # Allow caller-supplied PAR overrides to win.
+        seed_pars.update(run_kwargs.pop('PAR', {}))
+
         # Append PSI test-function PARs to ICP so they end up in the summary
         # for the zero-crossing scan and for visual inspection.
         psi_pars = [20 + j for j in IPSI]
@@ -1144,7 +1160,7 @@ class ODESystem:
             NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
             IEQUIB=int(IEQUIB), ITWIST=int(ITWIST), ISTART=1,
             IPSI=list(IPSI),
-            dat=dat_path.stem,
+            dat=dat_path.stem, PAR=seed_pars,
             **run_kwargs,
         )
 
