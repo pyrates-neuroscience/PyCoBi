@@ -383,6 +383,117 @@ def test_1_3d_write_auto_dat(tmp_path):
         write_auto_dat("not a frame", tmp_path / "wrong_type")
 
 
+@_requires_pyrates_dev
+def test_1_3e_hom_scenario_emission(auto_dir, tmp_path):
+    """``auto_constants=('hom',)`` emits a c.hom file populated with HomCont
+    constants (NUNSTAB, NSTAB, IEQUIB, ITWIST, ISTART, IPSI), and those keys
+    do *not* leak into the other scenarios' c.* files.
+
+    Auto-07p's main constants parser silently routes unknown keys through
+    HomCont (``main.f90:286``), so an ``IEQUIB=...`` line in c.eq is
+    technically harmless — but it is misleading.  Pin the per-scenario
+    filter that drops the HomCont-only keys outside c.hom.
+    """
+    from pyrates import CircuitTemplate, NodeTemplate, OperatorTemplate
+
+    # Simple Bogdanov-Takens-style model — enough state for a saddle.
+    op = OperatorTemplate(
+        name='bt_op',
+        equations=["x' = w", "w' = beta1 + beta2*w + x*x + x*w"],
+        variables={'x': 'output(0.0)', 'w': 'variable(0.0)',
+                   'beta1': -0.1, 'beta2': -0.1},
+    )
+    node = NodeTemplate(name='bt_node', operators=[op])
+    circuit = CircuitTemplate(name='bt', nodes={'p': node})
+
+    work = tmp_path / 'hom_emit'
+    work.mkdir()
+    ODESystem.reset_auto_state()
+    ODESystem.from_template(
+        template=circuit, working_dir=str(work), auto_dir=auto_dir,
+        init_cont=False, analytical_jacobian=True,
+        auto_constants=('eq', 'lc', 'hom'),
+        NUNSTAB=1, NSTAB=1, IEQUIB=1, ITWIST=0, ISTART=1,
+        IPSI=[9, 10, 15, 16],
+    ).close_session(clear_files=False)
+
+    chom = (work / 'c.hom').read_text()
+    ceq = (work / 'c.eq').read_text()
+    clc = (work / 'c.lc').read_text()
+
+    # c.hom carries the HomCont constants.
+    assert 'IPS = 9' in chom
+    assert 'NUNSTAB = 1' in chom
+    assert 'NSTAB = 1' in chom
+    assert 'IEQUIB = 1' in chom
+    assert 'ITWIST = 0' in chom
+    assert 'ISTART = 1' in chom
+    assert 'IPSI = [9, 10, 15, 16]' in chom
+
+    # Empty IREV / IFIXED lists are dropped (would otherwise set NREV=1 in
+    # HomCont's INSTRHO regardless of LISTLEN — see homcont.f90:780).
+    assert 'IREV' not in chom
+    assert 'IFIXED' not in chom
+
+    # HomCont keys do NOT appear in non-hom scenarios.
+    for text, scen in ((ceq, 'eq'), (clc, 'lc')):
+        for key in ('NUNSTAB', 'NSTAB', 'IEQUIB', 'ITWIST', 'ISTART',
+                    'IPSI', 'IREV', 'IFIXED'):
+            assert key not in text, f"{key} leaked into c.{scen}"
+
+
+@_requires_pyrates_dev
+def test_1_3f_continue_homoclinic_flag_psi(auto_dir, tmp_path):
+    """``_flag_psi_zero_crossings`` marks sign changes of PAR(20+IPSI) as the
+    requested bifurcation label.
+
+    The actual HomCont run needs a model that supports a homoclinic to a
+    saddle (and a hand-tuned starting orbit, which auto-07p demos provide
+    via per-demo .dat files); reproducing that in a unit test would be
+    brittle.  We focus on the deterministic piece — the post-processing
+    helper — by constructing a synthetic summary whose PSI(15) column
+    crosses zero, and check the bifurcation column gets the ``SNIC``
+    annotation at exactly the crossing row.
+    """
+    # Build a MultiIndex-columned summary matching PyCoBi's LC format.
+    cols = pd.MultiIndex.from_tuples([
+        ('eta', ''), ('bifurcation', ''),
+        ('PAR(35)', ''),    # PSI(15)
+        ('PAR(36)', ''),    # PSI(16)
+    ])
+    rows = [
+        # eta,  bifurcation,         PSI(15), PSI(16)
+        (0.0,  'EP',   1.0,  2.0),
+        (0.1,  'RG',   0.6,  1.5),
+        (0.2,  'RG',   0.1,  1.0),
+        (0.3,  'RG',  -0.4,  0.5),   # PSI(15) flips here → SNIC
+        (0.4,  'LP',  -0.8,  0.1),   # auto-07p label wins; SNIC not overwritten
+        (0.5,  'RG',  -1.0, -0.2),   # PSI(16) flips here → SNIC on otherwise-RG row
+        (0.6,  'EP',  -1.0, -0.3),
+    ]
+    df = pd.DataFrame(rows, columns=cols)
+
+    n = ODESystem._flag_psi_zero_crossings(df, ipsi=(15, 16), label='SNIC')
+    assert n == 2, f"expected 2 PSI sign changes, got {n}"
+
+    bifs = df[('bifurcation', '')].tolist()
+    assert bifs[3] == 'SNIC', "PSI(15) crossing at row 3 should be flagged"
+    assert bifs[4] == 'LP', "stronger auto-07p label at row 4 must NOT be overwritten"
+    assert bifs[5] == 'SNIC', "PSI(16) crossing at row 5 should be flagged"
+
+
+def test_1_3g_homcont_psi_names_table():
+    """``HOMCONT_PSI_NAMES`` documents every PSI test function (1..16) from
+    auto-07p's HomCont (``homcont.f90:PSIHO``).  Used in the docstring and
+    by users picking ``IPSI=[...]``.
+    """
+    table = ODESystem.HOMCONT_PSI_NAMES
+    assert set(table.keys()) == set(range(1, 17))
+    # The SNIC entries are the most important ones for this task.
+    assert 'saddle-node' in table[15].lower()
+    assert 'saddle-node' in table[16].lower()
+
+
 def test_1_4_name_remapping(auto_dir):
     """`_map_auto_kwargs` translates named PAR keys to integers in ICP, UZR,
     UZSTOP, THL, and THU. Previously only ICP/UZR were remapped, so

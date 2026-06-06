@@ -2,6 +2,7 @@ import os
 import pickle
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -623,9 +624,11 @@ class ODESystem:
             raise ValueError('Usage of keyword arguments `IRS` and `s` is disabled in pycobi. To start from a previous'
                              'solution, use the `starting_point` keyword argument and provide a tuple of branch '
                              'number and point number as returned by the `run` method.')
-        if not starting_point and self._last_cont > 0:
+        if not starting_point and self._last_cont > 0 and 'dat' not in auto_kwargs:
             raise ValueError('A starting point is required for further continuation. Either provide a solution to start'
-                             ' from via the `starting_point` keyword argument or create a fresh `ODESystem` instance.')
+                             ' from via the `starting_point` keyword argument or create a fresh `ODESystem` instance. '
+                             '(Exception: passing `dat=<basename>` bypasses this check — auto-07p reads the initial '
+                             'solution from the .dat file directly, which is the IPS=9 / HomCont workflow.)')
         if origin is None:
             origin = self._last_cont
         elif type(origin) is str:
@@ -976,6 +979,236 @@ class ODESystem:
                     solution_name = 'No Label'
 
         return s, solution_name, solution_idx
+
+    def extract_orbit_to_dat(self, cont: Union[Any, str, int], point: Union[str, int],
+                             path: Union[str, Path], *,
+                             n_points: Optional[int] = None,
+                             variables: Optional[list] = None) -> Path:
+        """Write a labelled periodic-orbit profile to an auto-07p ``.dat`` file.
+
+        Used to seed HomCont (``IPS=9``) continuations from a near-homoclinic
+        limit cycle.  Reads the per-mesh state values directly from auto-07p's
+        solution object — no need for the calling continuation to have been
+        run with ``get_timeseries=True``.
+
+        Parameters
+        ----------
+        cont
+            Key of the limit-cycle continuation that contains the labelled orbit
+            (name string, integer branch index, or the continuation object).
+        point
+            Auto-07p label of the orbit on that branch (``'LP1'``, ``'UZ2'``, …).
+        path
+            Output file path; ``.dat`` is appended if missing.
+        n_points
+            If given, linearly interpolate the orbit onto this many evenly
+            spaced mesh points (forwarded to :func:`write_auto_dat`).
+        variables
+            Optional subset of state-variable names to write.  Defaults to
+            every variable auto-07p exposed via the solution's ``coordnames``.
+
+        Returns
+        -------
+        pathlib.Path
+            The path the file was written to.
+        """
+        from .utility import write_auto_dat
+
+        s, name, _ = self.get_solution(point=point, cont=cont)
+        if s is None or name == "No Label":
+            raise KeyError(
+                f"extract_orbit_to_dat: point {point!r} not found on continuation {cont!r}"
+            )
+        # `get_solution` already unwraps to the auto solution object when given
+        # a string label, but the integer-index path returns the wrapper —
+        # peel one extra layer when needed (mirrors `get_solution_variables`).
+        if hasattr(s, 'b') and isinstance(getattr(s, 'b', None), dict):
+            s = s.b['solution']
+
+        coords = list(getattr(s, 'coordnames', []) or [])
+        if variables is None:
+            if not coords:
+                raise RuntimeError(
+                    "auto solution has no coordnames; pass `variables=[...]` explicitly"
+                )
+            variables = coords
+
+        time = np.asarray(s.indepvararray, dtype=float)
+        data = {v: np.asarray(s[v], dtype=float).ravel() for v in variables}
+        df = DataFrame(data, index=time)
+        return write_auto_dat(df, path, n_points=n_points)
+
+    def continue_homoclinic(self,
+                            origin: Union[Any, str, int],
+                            *,
+                            starting_point: str,
+                            ICP: list,
+                            NUNSTAB: int,
+                            NSTAB: int,
+                            IEQUIB: int = 1,
+                            ITWIST: int = 0,
+                            IPSI: tuple = (15, 16),
+                            name: str = 'hom',
+                            dat_basename: Optional[str] = None,
+                            n_points: int = 201,
+                            label_psi_crossings: bool = True,
+                            **run_kwargs) -> tuple:
+        r"""Continue a homoclinic orbit seeded from a near-homoclinic LC.
+
+        Wraps the auto-07p HomCont workflow (Chapter 20 of the AUTO manual) so
+        the calling code can describe a saddle-node-on-invariant-cycle (SNIC)
+        detection in a single line:
+
+        .. code-block:: python
+
+            ode.continue_homoclinic(
+                origin='lc_branch',          # an LC continuation that approached a homoclinic
+                starting_point='LP1',        # label where the orbit's period blew up
+                ICP=['eta', 'J'],            # 2-parameter homoclinic curve
+                NUNSTAB=1, NSTAB=1,          # saddle's eigenvalue split
+                IPSI=(15, 16),               # SNIC test functions
+            )
+
+        Pipeline:
+
+        1. Extract the orbit at ``(origin, starting_point)`` and write it as a
+           ``.dat`` file in the working directory (via
+           :meth:`extract_orbit_to_dat`).
+        2. Run a ``c='hom'`` continuation that reads the ``.dat`` as the initial
+           solution (``ISTART=1``), with the requested ``IPSI`` test functions.
+           The corresponding test-function PARs (``PAR(20 + IPSI[j])``) are
+           appended to ``ICP`` so they're recorded along the branch.
+        3. When ``label_psi_crossings=True`` (default), scan those PAR columns
+           for sign changes and mark each crossing as a ``'SNIC'`` (non-central
+           homoclinic to saddle-node) bifurcation on the resulting summary.
+
+        Parameters
+        ----------
+        origin
+            Key of the LC continuation that approached the homoclinic.
+        starting_point
+            Label of the orbit on ``origin`` to seed from.
+        ICP
+            Continuation parameters for the homoclinic curve (typically two
+            free model parameters).  The PSI-tracking PARs are appended
+            automatically — do not include them yourself.
+        NUNSTAB, NSTAB
+            Number of unstable / stable eigenvalues of the saddle the orbit is
+            homoclinic to.  See AUTO manual §20.4.
+        IEQUIB
+            Equilibrium-handling flag (1 = solve for the saddle as part of the
+            continuation, the most common choice).
+        ITWIST
+            0 = no adjoint; 1 = compute orientation-flip indicator.  AUTO §20.4.
+        IPSI
+            PSI test functions to monitor.  Defaults to ``(15, 16)`` —
+            *non-central homoclinic to saddle-node* in the stable / unstable
+            manifold respectively (AUTO §20.5).  See :data:`HOMCONT_PSI_NAMES`
+            for the full table.
+        name
+            Name to register the resulting continuation under.
+        dat_basename
+            Stem for the generated ``.dat`` file (default ``f'{name}_seed'``).
+            Auto-07p reads ``f'{stem}.dat'`` when given ``dat=stem``.
+        n_points
+            Mesh resolution for the seed (forwarded to
+            :meth:`extract_orbit_to_dat`).
+        label_psi_crossings
+            When True, mark PSI sign changes as ``'SNIC'`` in the summary's
+            ``bifurcation`` column for downstream plotting / inspection.
+        **run_kwargs
+            Forwarded to :meth:`ODESystem.run`.  Common picks:
+            ``DSMAX``, ``NMX``, ``UZR``, ``UZSTOP``, ``RL0``, ``RL1``.
+
+        Returns
+        -------
+        tuple
+            ``(summary, continuation)`` from the underlying :meth:`run` call.
+            When ``label_psi_crossings`` is True, ``summary['bifurcation']``
+            carries ``'SNIC'`` labels at every detected PSI zero-crossing.
+        """
+        dat_basename = dat_basename or f"{name}_seed"
+        dat_path = self.extract_orbit_to_dat(
+            cont=origin, point=starting_point,
+            path=str(Path(self.dir) / dat_basename), n_points=n_points,
+        )
+
+        # Append PSI test-function PARs to ICP so they end up in the summary
+        # for the zero-crossing scan and for visual inspection.
+        psi_pars = [20 + j for j in IPSI]
+        icp_full = list(ICP) + [p for p in psi_pars if p not in ICP]
+
+        sols, cont = self.run(
+            c='hom', name=name,
+            ICP=icp_full,
+            NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
+            IEQUIB=int(IEQUIB), ITWIST=int(ITWIST), ISTART=1,
+            IPSI=list(IPSI),
+            dat=dat_path.stem,
+            **run_kwargs,
+        )
+
+        if label_psi_crossings:
+            self._flag_psi_zero_crossings(sols, ipsi=IPSI, label='SNIC')
+        return sols, cont
+
+    @staticmethod
+    def _flag_psi_zero_crossings(summary: DataFrame, ipsi: tuple,
+                                 label: str = 'SNIC') -> int:
+        """Mark sign changes of PSI test functions in the bifurcation column.
+
+        Auto-07p stores ``PSI(j)`` at ``PAR(20 + j)``; this scans those columns
+        for index-to-index sign flips and writes ``label`` (default ``'SNIC'``)
+        into the summary's ``bifurcation`` column at every crossing whose row
+        wasn't already tagged with a stronger auto-07p label.  Returns the
+        number of crossings flagged.
+        """
+        # the bifurcation column on PyCoBi's MultiIndex summaries is always
+        # ``('bifurcation', '')``; on a flattened summary it's the bare string.
+        bif_col = ('bifurcation', '') if isinstance(summary.columns, MultiIndex) \
+            else 'bifurcation'
+
+        n = 0
+        for j in ipsi:
+            par_name = f'PAR({20 + j})'
+            candidates = [c for c in summary.columns
+                          if (isinstance(c, tuple) and c[0] == par_name)
+                          or c == par_name]
+            if not candidates:
+                continue
+            col = candidates[0]
+            vals = summary[col].to_numpy(dtype=float).ravel()
+            signs = np.sign(vals)
+            for i in range(1, len(signs)):
+                if signs[i - 1] != 0 and signs[i] != 0 and signs[i - 1] != signs[i]:
+                    idx = summary.index[i]
+                    cur = summary.at[idx, bif_col]
+                    if not cur or cur in ('RG', '', None):
+                        summary.at[idx, bif_col] = label
+                    n += 1
+        return n
+
+    # PSI test-function meanings (AUTO manual §20.5 / homcont.f90:PSIHO).
+    # Reference table for users picking ``IPSI=[...]`` in
+    # :meth:`continue_homoclinic`.
+    HOMCONT_PSI_NAMES = {
+        1: 'Resonant eigenvalues (neutral saddle)',
+        2: 'Double real stable leading eigenvalues',
+        3: 'Double real unstable leading eigenvalues',
+        4: 'Neutral saddle / saddle-focus / bi-focus',
+        5: 'Neutrally-divergent saddle-focus (stable complex)',
+        6: 'Neutrally-divergent saddle-focus (unstable complex)',
+        7: 'Three leading stable eigenvalues',
+        8: 'Three leading unstable eigenvalues',
+        9: 'Local bifurcation — NSTAB decreases (zero eigvalue / Hopf)',
+        10: 'Local bifurcation — NSTAB increases',
+        11: 'Orbit flip (leading stable direction)',
+        12: 'Orbit flip (leading unstable direction)',
+        13: 'Inclination flip (stable manifold)',
+        14: 'Inclination flip (unstable manifold)',
+        15: 'Non-central homoclinic to saddle-node (stable manifold)',
+        16: 'Non-central homoclinic to saddle-node (unstable manifold)',
+    }
 
     def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:
         """Extract properties from a solution.
