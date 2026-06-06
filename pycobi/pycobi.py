@@ -1039,9 +1039,9 @@ class ODESystem:
         return write_auto_dat(df, path, n_points=n_points)
 
     def continue_homoclinic(self,
-                            origin: Union[Any, str, int],
+                            origin: Union[Any, str, int, None] = None,
                             *,
-                            starting_point: str,
+                            starting_point: Optional[str] = None,
                             ICP: list,
                             NUNSTAB: int,
                             NSTAB: int,
@@ -1053,7 +1053,8 @@ class ODESystem:
                             n_points: int = 201,
                             label_psi_crossings: bool = True,
                             **run_kwargs) -> tuple:
-        r"""Continue a homoclinic orbit seeded from a near-homoclinic LC.
+        r"""Continue a homoclinic orbit seeded from a near-homoclinic LC or
+        a pre-existing ``.dat`` file.
 
         Wraps the auto-07p HomCont workflow (Chapter 20 of the AUTO manual) so
         the calling code can describe a saddle-node-on-invariant-cycle (SNIC)
@@ -1061,6 +1062,7 @@ class ODESystem:
 
         .. code-block:: python
 
+            # Mode A — extract the seed from an LC continuation:
             ode.continue_homoclinic(
                 origin='lc_branch',          # an LC continuation that approached a homoclinic
                 starting_point='LP1',        # label where the orbit's period blew up
@@ -1069,11 +1071,20 @@ class ODESystem:
                 IPSI=(15, 16),               # SNIC test functions
             )
 
-        Pipeline:
+            # Mode B — start from a pre-existing .dat (auto-07p demo style):
+            ode.continue_homoclinic(
+                dat_basename='mtn',          # working_dir/mtn.dat is read verbatim
+                ICP=[1, 2], NUNSTAB=1, NSTAB=1,
+                IEQUIB=2, IPSI=(15, 16),
+                PAR={11: 1046.18, 12: 5.74, 13: 0.51},  # IEQUIB>0 equilibrium
+            )
+
+        Pipeline (mode A):
 
         1. Extract the orbit at ``(origin, starting_point)`` and write it as a
            ``.dat`` file in the working directory (via
-           :meth:`extract_orbit_to_dat`).
+           :meth:`extract_orbit_to_dat`); read the seed's PAR vector off the
+           auto solution and forward via ``PAR={...}``.
         2. Run a ``c='hom'`` continuation that reads the ``.dat`` as the initial
            solution (``ISTART=1``), with the requested ``IPSI`` test functions.
            The corresponding test-function PARs (``PAR(20 + IPSI[j])``) are
@@ -1081,6 +1092,14 @@ class ODESystem:
         3. When ``label_psi_crossings=True`` (default), scan those PAR columns
            for sign changes and mark each crossing as a ``'SNIC'`` (non-central
            homoclinic to saddle-node) bifurcation on the resulting summary.
+
+        Pipeline (mode B):
+
+        Same as mode A but step 1 reads an existing ``working_dir/<dat_basename>.dat``
+        instead of synthesising it.  Pass ``PAR={...}`` to set whatever
+        parameter values the seed orbit corresponds to (typically required
+        for ``IEQUIB > 0`` workflows where the equilibrium values live in
+        ``PAR(11+i)``).
 
         Parameters
         ----------
@@ -1127,27 +1146,58 @@ class ODESystem:
             When ``label_psi_crossings`` is True, ``summary['bifurcation']``
             carries ``'SNIC'`` labels at every detected PSI zero-crossing.
         """
-        dat_basename = dat_basename or f"{name}_seed"
-        dat_path = self.extract_orbit_to_dat(
-            cont=origin, point=starting_point,
-            path=str(Path(self.dir) / dat_basename), n_points=n_points,
-        )
-
-        # Pull the seed orbit's parameter values out of the auto solution and
-        # forward them via the ``PAR={...}`` directive — without this,
-        # auto-07p falls back to STPNT defaults and Newton starts the
-        # homoclinic at the wrong point in parameter space (MX at step 2 in
-        # the typical failure mode).  We skip auto-07p's reserved slots
-        # PAR(11..14) since those carry the period / time / etc.
-        seed_sol, _, _ = self.get_solution(point=starting_point, cont=origin)
-        if hasattr(seed_sol, 'b') and isinstance(getattr(seed_sol, 'b', None), dict):
-            seed_sol = seed_sol.b['solution']
-        par_values = np.asarray(seed_sol.PAR, dtype=float)
-        seed_pars = {i + 1: float(par_values[i])
-                     for i in range(len(par_values))
-                     if not (10 <= i + 1 <= 14) and par_values[i] != 0.0}
-        # Allow caller-supplied PAR overrides to win.
-        seed_pars.update(run_kwargs.pop('PAR', {}))
+        # Two seed sources are supported: (a) extract an orbit from an
+        # existing LC continuation, the standard SNIC-from-LC pipeline,
+        # or (b) start from a pre-existing ``.dat`` file the caller wrote
+        # themselves (the workflow auto-07p's HomCont demos use, where the
+        # near-homoclinic orbit was hand-prepared).  ``origin`` selects
+        # between the two: omit it and pass ``dat_basename='something'``
+        # to use mode (b).
+        if origin is None:
+            if not dat_basename:
+                raise ValueError(
+                    "continue_homoclinic: either pass `origin` + "
+                    "`starting_point` (extract seed from an LC continuation) "
+                    "or `dat_basename` (use a pre-existing .dat file)."
+                )
+            dat_path = Path(self.dir) / f"{dat_basename}.dat"
+            if not dat_path.exists():
+                raise FileNotFoundError(
+                    f"continue_homoclinic: expected pre-existing seed at "
+                    f"{dat_path} but the file is missing.  Write the orbit "
+                    f"profile there (e.g. via `write_auto_dat`) before calling."
+                )
+            # Without an auto solution to read from, parameter values fall
+            # back to STPNT defaults.  Caller may pass `PAR={...}` to override
+            # specific slots (e.g. PAR(11+i) for IEQUIB > 0 equilibrium
+            # values, or PAR(11) for the truncation interval).
+            seed_pars = dict(run_kwargs.pop('PAR', {}))
+        else:
+            if starting_point is None:
+                raise ValueError(
+                    "continue_homoclinic: `starting_point` is required when "
+                    "extracting the seed from an existing continuation `origin`."
+                )
+            dat_basename = dat_basename or f"{name}_seed"
+            dat_path = self.extract_orbit_to_dat(
+                cont=origin, point=starting_point,
+                path=str(Path(self.dir) / dat_basename), n_points=n_points,
+            )
+            # Pull the seed orbit's parameter values out of the auto solution
+            # and forward them via the ``PAR={...}`` directive — without this,
+            # auto-07p falls back to STPNT defaults and Newton starts the
+            # homoclinic at the wrong point in parameter space (MX at step 2
+            # in the typical failure mode).  We skip auto-07p's reserved
+            # slots PAR(11..14) since those carry the period / time / etc.
+            seed_sol, _, _ = self.get_solution(point=starting_point, cont=origin)
+            if hasattr(seed_sol, 'b') and isinstance(getattr(seed_sol, 'b', None), dict):
+                seed_sol = seed_sol.b['solution']
+            par_values = np.asarray(seed_sol.PAR, dtype=float)
+            seed_pars = {i + 1: float(par_values[i])
+                         for i in range(len(par_values))
+                         if not (10 <= i + 1 <= 14) and par_values[i] != 0.0}
+            # Allow caller-supplied PAR overrides to win.
+            seed_pars.update(run_kwargs.pop('PAR', {}))
 
         # Append PSI test-function PARs to ICP so they end up in the summary
         # for the zero-crossing scan and for visual inspection.
