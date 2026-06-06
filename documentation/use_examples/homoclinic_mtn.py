@@ -95,7 +95,6 @@ circuit = CircuitTemplate(name='mtn', nodes={'p': node})
 # it through the same DFDU path as the equilibrium and limit-cycle
 # scenarios.
 
-ODESystem.reset_auto_state()
 ode = ODESystem.from_template(
     template=circuit,
     working_dir=str(work),

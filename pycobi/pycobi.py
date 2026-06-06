@@ -271,7 +271,21 @@ class ODESystem:
         process-wide runAUTO instance that holds the persisted ``constants``
         dict. Returns ``None`` if auto isn't imported or the layout changes
         upstream — callers must tolerate that.
+
+        Specifically: do NOT trigger an ``import auto`` here just to find a
+        runner. ``ODESystem.__init__`` sets ``AUTO_DIR`` before importing
+        auto so the package's fallback (which sets ``AUTO_DIR`` to the
+        directory three levels above ``AUTOclui.py``, a pip-install-layout
+        artefact) doesn't fire.  If something else calls ``_get_auto_runner``
+        before any ODESystem has been instantiated (e.g. ``reset_auto_state``
+        at the top of a fresh script), there's no runner to find anyway, and
+        triggering the import would only resolve ``AUTO_DIR`` to a wrong path
+        that lacks ``cmds/`` — ``interactiveBindings.AUTOInteractiveConsole``
+        then crashes at import with ``FileNotFoundError: <wrong>/cmds``.
         """
+        import sys
+        if 'auto' not in sys.modules:
+            return None
         try:
             import auto as a
         except ImportError:
