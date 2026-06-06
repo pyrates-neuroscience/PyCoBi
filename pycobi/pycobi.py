@@ -375,6 +375,29 @@ class ODESystem:
             Additional keyword arguments provided to the `pyrates.CircuitTemplate.get_run_func` method that is used to
             generate the fortran equation file and the auto constants file that will be used to initialize `ODESystem`.
 
+            For boundary-value problems (``'bvp'`` scenario, IPS=4), the following kwargs are recognised:
+
+            * ``boundary_conditions``: list of residual expressions in PyRates-name space; tokens
+              ``u0_<var>`` / ``u1_<var>`` refer to the state at t=0 / t=1, and ``par_<param>``
+              refers to a model parameter. Each entry should evaluate to 0 at the solution.
+              ``NBC`` is auto-derived from the list length. Example:
+              ``boundary_conditions=['u1_r - u0_r', 'u1_v - u0_v']`` for a periodic BC.
+
+            * ``integral_constraints``: same DSL but with token prefixes ``u_<var>`` /
+              ``uold_<var>`` / ``udot_<var>`` / ``upold_<var>``. ``NINT`` is auto-derived.
+              Example: ``integral_constraints=['u_r * udot_r']`` for a phase condition.
+
+            * ``bcnd_fortran`` + ``nbc``: raw-Fortran escape hatch for the ``BCND`` subroutine
+              body when the DSL is too restrictive. Auto-07p indexing applies
+              (``FB(i) = ...``, ``U0(j)``, ``U1(j)``, ``args(k)``). ``nbc`` must match the
+              number of residuals the body fills.
+
+            * ``icnd_fortran`` + ``nint``: same for the ``ICND`` subroutine body.
+
+            ``boundary_conditions`` and ``bcnd_fortran`` are mutually exclusive (likewise the
+            ``ICND`` pair). When none are provided the routines fall back to bare stubs (the
+            existing IPS=1/2/-2 behaviour).
+
         Returns
         -------
         ODESystem

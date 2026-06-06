@@ -174,6 +174,134 @@ def test_1_3_auto_constants(auto_dir, tmp_path):
         )
 
 
+@_requires_pyrates_dev
+def test_1_3b_bvp_residual_dsl(auto_dir, tmp_path):
+    """``boundary_conditions`` / ``integral_constraints`` populate BCND / ICND
+    with name-resolved residuals, and ``NBC`` / ``NINT`` track the list length.
+
+    Two complementary checks:
+      1. Periodic-BC residuals on a 2D test ODE emit ``fb(i) = u1(j) - u0(j)``
+         with state indices resolved from PyRates' uname dict; ``NBC=2``.
+      2. ``integral_constraints`` populates ``ICND`` and sets ``NINT``; tokens
+         that don't match the (prefix, state) or (par, param) grammar raise a
+         clear ValueError up front.
+    """
+    from pyrates import CircuitTemplate, NodeTemplate, OperatorTemplate
+
+    def _build_circuit(label: str) -> CircuitTemplate:
+        # Gelfand-Bratu BVP:  u' = v,  v' = -lam*exp(u),  u(0) = u(1) = 0.
+        op = OperatorTemplate(
+            name=f'bratu_op_{label}',
+            equations=["u' = v", "v' = -lam*exp(u)"],
+            variables={'u': 'output(0.0)', 'v': 'variable(0.0)', 'lam': 1.0},
+        )
+        node = NodeTemplate(name=f'bratu_node_{label}', operators=[op])
+        return CircuitTemplate(name=f'bratu_{label}', nodes={'p': node})
+
+    # --- (1) DSL Dirichlet BC + integral constraint ---------------------------
+    work = tmp_path / 'dsl'
+    work.mkdir()
+    ODESystem.reset_auto_state()
+    ODESystem.from_template(
+        template=_build_circuit('dsl'),
+        working_dir=str(work), auto_dir=auto_dir,
+        analytical_jacobian=True, auto_constants=('bvp',),
+        boundary_conditions=['u0_u', 'u1_u'],
+        integral_constraints=['u_u * udot_u'],
+        init_cont=False,
+    ).close_session(clear_files=False)
+
+    src = (work / 'system_equations.f90').read_text()
+    cbvp = (work / 'c.bvp').read_text()
+
+    # BCND populated with the two Dirichlet residuals
+    bcnd_block = re.search(r'subroutine bcnd[\s\S]*?end subroutine bcnd', src).group(0)
+    assert 'fb(1) = u0(1)' in bcnd_block
+    assert 'fb(2) = u1(1)' in bcnd_block
+    # ICND populated with the integral residual; udot(1) is the y-axis derivative
+    icnd_block = re.search(r'subroutine icnd[\s\S]*?end subroutine icnd', src).group(0)
+    assert 'fi(1)' in icnd_block and 'u(1)' in icnd_block and 'udot(1)' in icnd_block
+    # NBC / NINT auto-derived from the list lengths
+    assert 'NBC = 2' in cbvp
+    assert 'NINT = 1' in cbvp
+
+    # --- (2) unknown DSL symbol → clear ValueError ----------------------------
+    bad = tmp_path / 'bad'
+    bad.mkdir()
+    ODESystem.reset_auto_state()
+    with raises(ValueError, match=r"unrecognised symbol"):
+        ODESystem.from_template(
+            template=_build_circuit('bad'),
+            working_dir=str(bad), auto_dir=auto_dir,
+            auto_constants=('bvp',),
+            boundary_conditions=['u0_xyz'],   # `xyz` is not a state
+            init_cont=False,
+        )
+
+
+@_requires_pyrates_dev
+def test_1_3c_bvp_raw_fortran(auto_dir, tmp_path):
+    """``bcnd_fortran`` + ``nbc`` is the escape hatch for cases the DSL can't
+    express; the raw Fortran is inserted verbatim and ``NBC`` is set from the
+    kwarg. The DSL and the raw-Fortran kwarg are mutually exclusive.
+    """
+    from pyrates import CircuitTemplate, NodeTemplate, OperatorTemplate
+
+    def _build_circuit(label: str) -> CircuitTemplate:
+        op = OperatorTemplate(
+            name=f'bratu_op_{label}',
+            equations=["u' = v", "v' = -lam*exp(u)"],
+            variables={'u': 'output(0.0)', 'v': 'variable(0.0)', 'lam': 1.0},
+        )
+        node = NodeTemplate(name=f'bratu_node_{label}', operators=[op])
+        return CircuitTemplate(name=f'bratu_{label}', nodes={'p': node})
+
+    # --- (1) raw Fortran escape hatch -----------------------------------------
+    work = tmp_path / 'raw'
+    work.mkdir()
+    ODESystem.reset_auto_state()
+    ODESystem.from_template(
+        template=_build_circuit('raw'),
+        working_dir=str(work), auto_dir=auto_dir,
+        auto_constants=('bvp',),
+        bcnd_fortran='fb(1) = u0(1)\nfb(2) = u1(1) - args(1)',
+        nbc=2,
+        init_cont=False,
+    ).close_session(clear_files=False)
+    src = (work / 'system_equations.f90').read_text()
+    cbvp = (work / 'c.bvp').read_text()
+    bcnd_block = re.search(r'subroutine bcnd[\s\S]*?end subroutine bcnd', src).group(0)
+    assert 'fb(1) = u0(1)' in bcnd_block
+    assert 'fb(2) = u1(1) - args(1)' in bcnd_block
+    assert 'NBC = 2' in cbvp
+
+    # --- (2) DSL + raw both provided → rejected -------------------------------
+    both = tmp_path / 'both'
+    both.mkdir()
+    ODESystem.reset_auto_state()
+    with raises(ValueError, match=r"either.*boundary_conditions.*or.*bcnd_fortran"):
+        ODESystem.from_template(
+            template=_build_circuit('both'),
+            working_dir=str(both), auto_dir=auto_dir,
+            auto_constants=('bvp',),
+            boundary_conditions=['u0_u'], bcnd_fortran='fb(1) = u0(1)', nbc=1,
+            init_cont=False,
+        )
+
+    # --- (3) raw without nbc → rejected ---------------------------------------
+    no_nbc = tmp_path / 'no_nbc'
+    no_nbc.mkdir()
+    ODESystem.reset_auto_state()
+    with raises(ValueError, match=r"`nbc`"):
+        ODESystem.from_template(
+            template=_build_circuit('no_nbc'),
+            working_dir=str(no_nbc), auto_dir=auto_dir,
+            auto_constants=('bvp',),
+            bcnd_fortran='fb(1) = u0(1)',
+            init_cont=False,
+        )
+
+
 def test_1_4_name_remapping(auto_dir):
     """`_map_auto_kwargs` translates named PAR keys to integers in ICP, UZR,
     UZSTOP, THL, and THU. Previously only ICP/UZR were remapped, so
