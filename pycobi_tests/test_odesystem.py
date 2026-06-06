@@ -302,6 +302,87 @@ def test_1_3c_bvp_raw_fortran(auto_dir, tmp_path):
         )
 
 
+def test_1_3d_write_auto_dat(tmp_path):
+    """``write_auto_dat`` writes a time-series DataFrame to auto-07p's .dat
+    format. Behaviour pinned here:
+
+      1. Default time normalisation maps the index span to [0, 1] and writes
+         every input row in the column order ``df.columns`` (or ``columns=``).
+      2. ``n_points`` resamples onto a regular mesh of that many evenly-spaced
+         time points (linear interpolation against the original index).
+      3. ``period=`` overrides the inferred period; ``normalize_time=False``
+         emits raw simulation time.
+      4. Error paths: empty DataFrame, single-row DataFrame, unknown columns,
+         non-numeric columns, non-positive period, ``n_points < 2``.
+      5. ``.dat`` suffix is appended when missing.
+    """
+    from pycobi import write_auto_dat
+
+    # Build a clean periodic time series (one full sine period over t ∈ [0, 1]).
+    t = np.linspace(0.0, 1.0, 201)
+    df = pd.DataFrame({"x": np.sin(2 * np.pi * t),
+                       "y": np.cos(2 * np.pi * t)}, index=t)
+
+    # --- (1) default normalisation: t in [0, 1], all columns preserved --------
+    path = write_auto_dat(df, tmp_path / "orbit")  # no .dat suffix
+    assert path == tmp_path / "orbit.dat"
+    table = np.loadtxt(path)
+    assert table.shape == (len(df), 3)             # time + 2 states
+    assert table[0, 0] == approx(0.0, abs=1e-12)
+    assert table[-1, 0] == approx(1.0, abs=1e-12)
+    np.testing.assert_allclose(table[:, 1], df["x"].to_numpy(), atol=1e-12)
+    np.testing.assert_allclose(table[:, 2], df["y"].to_numpy(), atol=1e-12)
+
+    # --- (2) interpolation onto a regular mesh of n_points samples ----------
+    path = write_auto_dat(df, tmp_path / "orbit_201", n_points=51)
+    table = np.loadtxt(path)
+    assert table.shape == (51, 3)
+    assert table[0, 0] == approx(0.0, abs=1e-12)
+    assert table[-1, 0] == approx(1.0, abs=1e-12)
+    # interpolated sine at t=0.5 (post-normalisation) → 0 to interp tolerance
+    mid = table[len(table) // 2, 1]
+    assert abs(mid) < 0.05
+
+    # --- (3a) explicit period overrides the inferred span -------------------
+    df_two_periods = pd.DataFrame({"x": np.sin(2 * np.pi * t)},
+                                  index=t * 2.0)        # spans [0, 2]
+    path = write_auto_dat(df_two_periods, tmp_path / "two_periods", period=1.0)
+    table = np.loadtxt(path)
+    # 2-unit span normalised by period=1.0 → time runs from 0 to 2 (one period
+    # is the unit interval, but the DataFrame holds two of them).
+    assert table[-1, 0] == approx(2.0, abs=1e-12)
+
+    # --- (3b) raw time when normalize_time=False ----------------------------
+    path = write_auto_dat(df_two_periods, tmp_path / "raw_time",
+                          normalize_time=False)
+    table = np.loadtxt(path)
+    assert table[0, 0] == approx(0.0, abs=1e-12)
+    assert table[-1, 0] == approx(2.0, abs=1e-12)
+
+    # --- (4a) column subset + reordering ------------------------------------
+    path = write_auto_dat(df, tmp_path / "ordered", columns=["y", "x"])
+    table = np.loadtxt(path)
+    assert table.shape == (len(df), 3)
+    np.testing.assert_allclose(table[:, 1], df["y"].to_numpy(), atol=1e-12)
+    np.testing.assert_allclose(table[:, 2], df["x"].to_numpy(), atol=1e-12)
+
+    # --- (5) error paths ----------------------------------------------------
+    with raises(ValueError, match="at least 2 rows"):
+        write_auto_dat(df.iloc[:1], tmp_path / "tiny")
+    with raises(KeyError, match="columns not found"):
+        write_auto_dat(df, tmp_path / "bad_col", columns=["x", "z"])
+    with raises(TypeError, match="must be numeric"):
+        df_str = df.copy()
+        df_str["x"] = "not a number"
+        write_auto_dat(df_str, tmp_path / "string_col")
+    with raises(ValueError, match="period.* not positive"):
+        write_auto_dat(df, tmp_path / "zero_period", period=0.0)
+    with raises(ValueError, match="n_points must be at least 2"):
+        write_auto_dat(df, tmp_path / "one_point", n_points=1)
+    with raises(TypeError, match="DataFrame"):
+        write_auto_dat("not a frame", tmp_path / "wrong_type")
+
+
 def test_1_4_name_remapping(auto_dir):
     """`_map_auto_kwargs` translates named PAR keys to integers in ICP, UZR,
     UZSTOP, THL, and THU. Previously only ICP/UZR were remapped, so

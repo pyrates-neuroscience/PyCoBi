@@ -1,7 +1,9 @@
 import re
-from typing import List, Any, Optional
+from pathlib import Path
+from typing import Any, Iterable, List, Optional, Union
 
 import numpy as np
+import pandas as pd
 
 
 # auto-object related utility functions
@@ -384,3 +386,124 @@ def fractal_dimension(lyapunov_exponents: list) -> float:
             k -= 1
             break
     return k + np.sum(LEs[:k]) / np.abs(LEs[k])
+
+
+def write_auto_dat(
+    df: pd.DataFrame,
+    path: Union[str, Path],
+    *,
+    columns: Optional[Iterable] = None,
+    n_points: Optional[int] = None,
+    period: Optional[float] = None,
+    normalize_time: bool = True,
+) -> Path:
+    r"""Write a time-series ``DataFrame`` as an auto-07p ``.dat`` file.
+
+    Auto-07p reads ``.dat`` files via the ``dat=`` argument of its python
+    ``run()`` command to initialise periodic-orbit continuations from a
+    user-supplied time series (one column of time + one column per state
+    variable, whitespace-separated). This helper writes such a file from a
+    ``pandas.DataFrame`` — most commonly the output of
+    :meth:`pyrates.CircuitTemplate.run`, but any time-indexed numeric
+    DataFrame works.
+
+    Parameters
+    ----------
+    df
+        Time-indexed DataFrame. The index is interpreted as time; columns hold
+        the state variables. A ``MultiIndex`` on columns is fine — every
+        column entry survives into the output file in the order encountered
+        (or the order given by ``columns``).
+    path
+        Output file path. A ``.dat`` suffix is appended if missing.
+    columns
+        Optional subset of columns to write, in the order they should appear.
+        Defaults to every column of ``df``.
+    n_points
+        If given, linearly interpolate the time series onto this many
+        evenly-spaced points before writing. Useful when the simulation
+        produced more samples than auto-07p needs, or to ensure a regular
+        mesh from an adaptive solver. Defaults to writing every input row.
+    period
+        Length (in the same units as the index) of one period of the orbit
+        the file represents. Only consulted when ``normalize_time=True``.
+        Defaults to ``df.index[-1] - df.index[0]`` — i.e. assumes the
+        DataFrame already covers exactly one period.
+    normalize_time
+        When True (default), shift the time column so it starts at 0 and
+        divide by ``period`` so it ends at 1. Auto-07p's default convention
+        is a normalised ``[0, 1]`` mesh and the orbit's actual period lives in
+        ``PAR(11)``; turn this off only if the consuming workflow expects raw
+        simulation time.
+
+    Returns
+    -------
+    pathlib.Path
+        The (possibly suffix-extended) path the file was written to.
+
+    Notes
+    -----
+    Recipe for hooking the file into a periodic-orbit continuation:
+
+    .. code-block:: python
+
+        write_auto_dat(sim_df, 'orbit')                 # → orbit.dat
+        ode = ODESystem.from_template(template, ..., auto_constants=('lc',))
+        sols, cont = ode.run(c='lc', ICP=['eta', 11], dat='orbit', name='lc0')
+
+    The ``dat='orbit'`` argument tells auto-07p to read ``orbit.dat`` as the
+    starting time series; ``ICP=['eta', 11]`` puts the orbit's period in
+    PAR(11) so it varies along the continuation.
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"expected pandas.DataFrame, got {type(df).__name__}")
+    if len(df) < 2:
+        raise ValueError("DataFrame must have at least 2 rows to define a time series")
+
+    cols = list(df.columns) if columns is None else list(columns)
+    if not cols:
+        raise ValueError("at least one column must be selected")
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise KeyError(f"columns not found in DataFrame: {missing}")
+
+    data = df[cols].to_numpy()
+    if not np.issubdtype(data.dtype, np.number):
+        raise TypeError(
+            f"selected columns must be numeric; got dtype {data.dtype}"
+        )
+    data = data.astype(float, copy=False)
+    time = np.asarray(df.index, dtype=float)
+
+    # Optional interpolation onto a regular mesh of n_points samples — done
+    # before time normalisation so the interpolation uses the original spacing.
+    if n_points is not None:
+        if n_points < 2:
+            raise ValueError("n_points must be at least 2")
+        t_uniform = np.linspace(time[0], time[-1], n_points)
+        data = np.column_stack([
+            np.interp(t_uniform, time, data[:, j]) for j in range(data.shape[1])
+        ])
+        time = t_uniform
+
+    if normalize_time:
+        T = period if period is not None else float(time[-1] - time[0])
+        if T <= 0:
+            raise ValueError(
+                f"cannot normalize time: period={T} is not positive"
+            )
+        time = (time - time[0]) / T
+
+    out_path = Path(path)
+    if out_path.suffix != ".dat":
+        out_path = out_path.with_suffix(out_path.suffix + ".dat") \
+            if out_path.suffix else out_path.with_suffix(".dat")
+
+    # Format: free-form whitespace-separated, matching auto-07p's own demos
+    # (e.g. pen.dat). 14-digit scientific notation gives ~12 significant
+    # figures — well within double precision and trivial for auto's
+    # free-format Fortran reader to consume.
+    fmt = "%23.14E"
+    table = np.column_stack([time, data])
+    np.savetxt(out_path, table, fmt=fmt)
+    return out_path

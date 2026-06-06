@@ -37,5 +37,6 @@ from .utility import (
     get_solution_eigenvalues,
     parse_point_diagnostics,
     fractal_dimension,
+    write_auto_dat,
 )
 from .automated_continuation import continue_period_doubling_bf, codim2_search
