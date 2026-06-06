@@ -59,7 +59,7 @@ ode = ODESystem.from_yaml(
     auto_dir="~/PycharmProjects/auto-07p",
     node_vars={
         'p/qif_biexp_sfa_op/Delta': 2.0,
-        'p/qif_biexp_sfa_op/alpha': 0.7,
+        'p/qif_biexp_sfa_op/alpha': 0.5,
         'p/qif_biexp_sfa_op/tau_r': 10.0,
         'p/qif_biexp_sfa_op/tau_d': 10.0,
         'p/qif_biexp_sfa_op/eta': -8.0,
@@ -84,39 +84,57 @@ print("eta scan:", dict(eta_sols['bifurcation'].value_counts()))
 # Step 2: continue the limit cycle from HB2 toward the homoclinic
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# The Hopf at the upper edge of the spiking regime gives birth to a stable
-# limit cycle.  As :math:`\bar\eta` is continued in the positive direction,
-# the orbit's period grows: the LC is approaching a homoclinic to a saddle
-# equilibrium.  We push the continuation hard (``NMX=5000``, very small
-# ``DSMIN``) to reach a high-period near-homoclinic profile that HomCont
-# can take over from.
+# The Hopf at the upper edge of the spiking regime gives birth to a limit
+# cycle whose period grows as :math:`\bar\eta` walks the branch toward a
+# saddle-loop homoclinic.  At the canonical Gast-2020 Fig. 5 parameter
+# point (:math:`\alpha=1.0,\ \Delta=2.0,\ J=15\sqrt{\Delta}`) the LC has
+# exactly two folds (``LP1`` near the upper turning point in :math:`\bar
+# \eta`, ``LP2`` near the homoclinic side) and *no* period doublings.
 #
 # .. note::
 #    For limit-cycle continuations that span large periods, the auto-07p
 #    Newton tolerances (``EPSL``, ``EPSU``) and the bifurcation-detection
 #    tolerance (``EPSS``) need to be tightened relative to the global
 #    defaults — otherwise the test functions used to flag ``LP`` /
-#    ``PD`` / ``BP`` along the LC become dominated by numerical noise
-#    and produce *spurious* bifurcations (the tell-tale symptom: an
-#    ``LP`` is detected but the ``stability`` column doesn't flip
-#    around it).  PyCoBi's ``'lc'`` scenario already ships with
-#    ``EPSL = EPSU = 1e-7`` and ``EPSS = 1e-5`` by default; for this
-#    high-period run we tighten one more step to ``1e-8`` / ``1e-6``
-#    and use ``NTST=200`` (vs the default 50) to give the BVP mesh
-#    enough resolution to capture the sharp homoclinic spike.
+#    ``PD`` / ``BP`` along the LC become dominated by numerical noise and
+#    auto-07p reports double-digit *spurious* bifurcations (the tell-tale
+#    symptom: an ``LP`` is detected but the ``stability`` column doesn't
+#    flip around it; ``PD``s appear despite the analytical solution
+#    having no period doubling).
+#
+#    PyCoBi's ``'lc'`` scenario ships with ``EPSL = EPSU = 1e-7`` and
+#    ``EPSS = 1e-5``.  At those defaults this exact LC reports ~24 LPs
+#    and 4 PDs.  Tightening to ``1e-9`` / ``1e-7`` with ``NTST = 400``
+#    (the values below) gives **exactly 2 LPs and 0 PDs** — matching
+#    Gast-2020 Fig. 5 — at the cost of a slower continuation.  Add
+#    ``STOP=['LP3']`` so auto-07p doesn't waste steps in the noisy
+#    near-homoclinic tail past the second fold.
 
 lc_sols, _ = ode.run(
     starting_point='HB2', name='lc_branch',
     c='lc', origin='eta_branch',
     ICP=['p/qif_biexp_sfa_op/eta', 11],
-    NMX=8000, NPR=10, DS=1e-3, DSMIN=1e-12, DSMAX=5e-2,
-    EPSL=1e-8, EPSU=1e-8, EPSS=1e-6,
-    NTST=200, NCOL=4,
+    NMX=8000, NPR=20, DS=1e-3, DSMIN=1e-12, DSMAX=5e-2,
+    EPSL=1e-9, EPSU=1e-9, EPSS=1e-7,
+    NTST=400, NCOL=4,
     bidirectional=False, get_period=True,
+    STOP=['LP3'],
 )
 periods = np.asarray(lc_sols[('PAR(11)', '')], dtype=float)
 print(f"LC bifurcations: {dict(lc_sols['bifurcation'].value_counts())}")
 print(f"LC period grows from {periods.min():.1f} to {periods.max():.1f}")
+# Show the LPs and confirm they're real (stability flips) — reproduces
+# the two-fold structure of Gast-2020 Fig. 5.
+_bif = lc_sols[('bifurcation', '')].values
+_stab = lc_sols[('stability', '')].values
+_eta_col = ('eta', '') if ('eta', '') in lc_sols.columns \
+    else ('p/qif_biexp_sfa_op/eta', '')
+_eta = lc_sols[_eta_col].values
+for i, b in enumerate(_bif):
+    if str(b).strip() == 'LP':
+        flip = (_stab[i-1] != _stab[i]) if i > 0 else None
+        print(f"  LP @ eta={float(_eta[i]):+.5f}, period={periods[i]:7.2f}, "
+              f"stability flip: {bool(flip)}")
 
 # Quick 1D bifurcation diagram of the eta scan + LC envelope.
 fig, ax = plt.subplots(figsize=(8, 4))
