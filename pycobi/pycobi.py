@@ -1405,6 +1405,96 @@ class ODESystem:
                     n += 1
         return n
 
+    def label_homoclinic_terminus(self, cont: Union[Any, str, int], *,
+                                  threshold_ratio: float = 5.0,
+                                  period_var: str = 'PAR(11)',
+                                  label: str = 'HC') -> Optional[int]:
+        """Heuristically tag the homoclinic terminus on an LC continuation.
+
+        A saddle-loop homoclinic shows up at the end of a limit-cycle
+        branch as a divergence of the orbit's period: as the parameter
+        approaches the homoclinic value, the period grows without bound
+        (logarithmically in the canonical case).  Auto-07p doesn't issue
+        a built-in label for this — the continuation just stops at NMX
+        or hits DSMIN — but a useful rule-of-thumb is "if the maximum
+        period on the branch is at least ``threshold_ratio`` times the
+        minimum period, the row carrying that maximum is approximating a
+        homoclinic orbit".
+
+        This helper applies that heuristic to the summary of ``cont``:
+        finds the row with the largest ``PAR(11)`` value, and — if the
+        max-to-min period ratio exceeds ``threshold_ratio`` — overwrites
+        that row's ``bifurcation`` entry with ``label`` (default
+        ``'HC'``).  Stronger auto-07p labels (``LP``, ``PD``, ``BP``,
+        ``HB``) at the same row are preserved; ``RG`` and ``EP`` are
+        replaced.  Returns the row's index, or ``None`` if the heuristic
+        didn't trigger.
+
+        Parameters
+        ----------
+        cont
+            Key of the LC continuation to scan.
+        threshold_ratio
+            Minimum max-to-min period ratio for the heuristic to fire.
+            Default 5.0 — generous enough that ordinary fold-of-cycles
+            (where the period grows ~2x along the branch) don't get
+            relabelled, but tight enough that the period-divergence at a
+            saddle-loop homoclinic stands out clearly.
+        period_var
+            Summary column name carrying the period.  PyCoBi's default
+            is ``'PAR(11)'`` (auto-07p's reserved period slot).
+        label
+            Replacement bifurcation label.  Default ``'HC'`` (mnemonic
+            for *homoclinic*).
+
+        Returns
+        -------
+        int or None
+            Row index of the relabelled row, or ``None`` if the period
+            growth was below threshold (no homoclinic detected).
+        """
+        return self._label_homoclinic_terminus(
+            self.get_summary(cont),
+            threshold_ratio=threshold_ratio,
+            period_var=period_var,
+            label=label,
+        )
+
+    @staticmethod
+    def _label_homoclinic_terminus(summary: DataFrame, *,
+                                   threshold_ratio: float = 5.0,
+                                   period_var: str = 'PAR(11)',
+                                   label: str = 'HC') -> Optional[int]:
+        """In-place homoclinic-terminus heuristic on a summary DataFrame.
+
+        Behaviour, return value, and parameter semantics are identical to
+        :meth:`label_homoclinic_terminus`; this static variant lets tests
+        exercise the labelling logic without spinning up a full
+        ``ODESystem`` instance.
+        """
+        bif_col = ('bifurcation', '') if isinstance(summary.columns, MultiIndex) \
+            else 'bifurcation'
+        period_col = None
+        for c in summary.columns:
+            head = c[0] if isinstance(c, tuple) else c
+            if head == period_var:
+                period_col = c
+                break
+        if period_col is None:
+            return None
+        periods = summary[period_col].to_numpy(dtype=float).ravel()
+        if periods.size < 2 or not np.isfinite(periods).all():
+            return None
+        p_max, p_min = float(periods.max()), float(periods.min())
+        if p_min <= 0 or p_max / p_min < threshold_ratio:
+            return None
+        i_max = int(np.argmax(periods))
+        idx = summary.index[i_max]
+        cur = summary.at[idx, bif_col]
+        if not cur or str(cur).strip() in ('RG', 'EP', '', 'None'):
+            summary.at[idx, bif_col] = label
+        return i_max
+
     # PSI test-function meanings (AUTO manual §20.5 / homcont.f90:PSIHO).
     # Reference table for users picking ``IPSI=[...]`` in
     # :meth:`continue_homoclinic`.  Each PSI is a scalar test function;

@@ -494,6 +494,59 @@ def test_1_3g_homcont_psi_names_table():
     assert 'saddle-node' in table[16].lower()
 
 
+def test_1_3h_label_homoclinic_terminus():
+    """``label_homoclinic_terminus`` fires when the LC's max-to-min period
+    ratio exceeds the threshold, tagging the high-period row as ``'HC'``;
+    silent otherwise.  Pins:
+
+      1. Period blow-up far above threshold → relabels the argmax row.
+      2. Mild period growth below threshold → no-op (returns None).
+      3. The replacement preserves stronger auto-07p labels (LP, PD, BP,
+         HB) at the relabelled row.
+    """
+    cols = pd.MultiIndex.from_tuples([
+        ('eta', ''), ('bifurcation', ''), ('PAR(11)', ''),
+    ])
+
+    # --- (1) clean homoclinic blow-up ----------------------------------------
+    df = pd.DataFrame([
+        (-5.0,  'EP',   15.0),
+        (-5.1,  'RG',   30.0),
+        (-5.2,  'RG',   80.0),
+        (-5.3,  'EP',  380.0),    # ratio ~ 25x, well above default 5x
+    ], columns=cols)
+    i = ODESystem._label_homoclinic_terminus(df)
+    assert i == 3, f"expected row 3, got {i}"
+    assert df[('bifurcation', '')].iloc[3] == 'HC'
+
+    # --- (2) mild period growth: heuristic should NOT fire -------------------
+    df_mild = pd.DataFrame([
+        (-5.0,  'EP',  15.0),
+        (-5.1,  'RG',  20.0),
+        (-5.2,  'EP',  25.0),     # ratio ~ 1.7x, below threshold
+    ], columns=cols)
+    i = ODESystem._label_homoclinic_terminus(df_mild)
+    assert i is None
+    # original labels intact
+    assert df_mild[('bifurcation', '')].tolist() == ['EP', 'RG', 'EP']
+
+    # --- (3) stronger auto-07p label at the argmax row is preserved ----------
+    df_lp = pd.DataFrame([
+        (-5.0,  'EP',   15.0),
+        (-5.1,  'RG',   30.0),
+        (-5.2,  'LP',  380.0),    # LP at the argmax
+        (-5.3,  'EP',  100.0),
+    ], columns=cols)
+    i = ODESystem._label_homoclinic_terminus(df_lp)
+    assert i == 2  # heuristic still returns the index it considered
+    assert df_lp[('bifurcation', '')].iloc[2] == 'LP'  # LP NOT overwritten
+
+    # --- (4) custom threshold_ratio / label kwarg pass through ---------------
+    i = ODESystem._label_homoclinic_terminus(df_mild, threshold_ratio=1.5,
+                                              label='HOM')
+    assert i == 2 and df_mild[('bifurcation', '')].iloc[2] == 'HOM'
+
+
 def test_1_4_name_remapping(auto_dir):
     """`_map_auto_kwargs` translates named PAR keys to integers in ICP, UZR,
     UZSTOP, THL, and THU. Previously only ICP/UZR were remapped, so

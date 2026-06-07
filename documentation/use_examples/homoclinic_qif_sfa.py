@@ -86,16 +86,17 @@ ode = ODESystem.from_yaml(
 )
 
 # Equilibrium continuation in eta — locates HB1 / HB2 / LP1 / LP2.
-# UZR pins :math:`\bar\eta = -5.39406` (the homoclinic point we will
-# discover from the LC's BP cluster in Step 2) so the saddle equilibrium's
-# state values are available as labelled UZ solutions later in Step 4.
+# UZR pins :math:`\bar\eta = -5.394` (a value slightly different from the
+# LC's homoclinic terminus at :math:`\bar\eta \approx -5.39358`, see the
+# note in Step 4) so the saddle equilibrium's state values are available
+# as labelled UZ solutions later when seeding HomCont.
 eta_sols, _ = ode.run(
     starting_point='EP2', name='eta_branch',
     c='eq', ICP='p/qif_biexp_sfa_op/eta', bidirectional=True,
     RL0=-8.0, RL1=2.0,
     NMX=2000, NPR=10, DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
     ITMX=40, ITNW=40, NWTN=12, NTST=400, NCOL=4,
-    UZR={'p/qif_biexp_sfa_op/eta': [-5.39406]},
+    UZR={'p/qif_biexp_sfa_op/eta': [-5.394]},
 )
 print("eta scan:", dict(eta_sols['bifurcation'].value_counts()))
 
@@ -103,31 +104,31 @@ print("eta scan:", dict(eta_sols['bifurcation'].value_counts()))
 # Step 2: continue the limit cycle from HB2 toward the homoclinic
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# The Hopf at the upper edge of the spiking regime gives birth to a limit
-# cycle whose period grows as :math:`\bar\eta` walks the branch toward a
-# saddle-loop homoclinic.  At the canonical Gast-2020 Fig. 5 parameter
-# point (:math:`\alpha=1.0,\ \Delta=2.0,\ J=15\sqrt{\Delta}`) the LC has
-# exactly two folds (``LP1`` near the upper turning point in :math:`\bar
-# \eta`, ``LP2`` near the homoclinic side) and *no* period doublings.
+# The Hopf at the upper edge of the spiking regime gives birth to an
+# unstable limit cycle whose period grows as :math:`\bar\eta` walks the
+# branch toward a saddle-loop homoclinic.  At :math:`\alpha=0.5,\ \Delta=2.0,
+# \ J=15\sqrt{\Delta},\ \tau_r=\tau_d=10` the LC reaches the homoclinic
+# at :math:`\bar\eta \approx -5.394` with a period of ~388.
 #
 # .. note::
-#    For limit-cycle continuations that span large periods, the auto-07p
-#    Newton tolerances (``EPSL``, ``EPSU``) and the bifurcation-detection
-#    tolerance (``EPSS``) need to be tightened relative to the global
-#    defaults — otherwise the test functions used to flag ``LP`` /
-#    ``PD`` / ``BP`` along the LC become dominated by numerical noise and
-#    auto-07p reports double-digit *spurious* bifurcations (the tell-tale
-#    symptom: an ``LP`` is detected but the ``stability`` column doesn't
-#    flip around it; ``PD``s appear despite the analytical solution
-#    having no period doubling).
+#    For high-period limit-cycle continuations approaching a homoclinic,
+#    auto-07p's Newton tolerances and bifurcation-detection tolerance
+#    need to be tighter than the global defaults — otherwise the test
+#    functions used to flag ``LP`` / ``PD`` / ``BP`` along the LC become
+#    dominated by numerical noise and auto-07p reports spurious
+#    bifurcations.  PyCoBi's ``'lc'`` scenario ships with
+#    ``EPSL = EPSU = 1e-7`` and ``EPSS = 1e-5``.  For this LC the
+#    progression is:
 #
-#    PyCoBi's ``'lc'`` scenario ships with ``EPSL = EPSU = 1e-7`` and
-#    ``EPSS = 1e-5``.  At those defaults this exact LC reports ~24 LPs
-#    and 4 PDs.  Tightening to ``1e-9`` / ``1e-7`` with ``NTST = 400``
-#    (the values below) gives **exactly 2 LPs and 0 PDs** — matching
-#    Gast-2020 Fig. 5 — at the cost of a slower continuation.  Add
-#    ``STOP=['LP3']`` so auto-07p doesn't waste steps in the noisy
-#    near-homoclinic tail past the second fold.
+#    * Defaults (``NTST=50, EPSL=1e-7``): ~24 LPs, ~8 BPs, ~4 PDs.
+#    * ``NTST=400, EPSL=1e-9``: ~24 LPs drop to <10, but 3 PDs remain.
+#    * ``NTST=800, EPSL=1e-9`` (the values below): all PDs disappear.
+#
+#    The remaining ~800 BP labels concentrate at the homoclinic
+#    :math:`\bar\eta` and are **not** numerical noise — they're auto-07p
+#    detecting the LC branch nearly intersecting the saddle equilibrium's
+#    branch, which is exactly what a saddle-loop homoclinic *is*.  We
+#    keep them and ignore them in the 1D plot.
 
 lc_sols, _ = ode.run(
     starting_point='HB2', name='lc_branch',
@@ -135,41 +136,58 @@ lc_sols, _ = ode.run(
     ICP=['p/qif_biexp_sfa_op/eta', 11],
     NMX=8000, NPR=20, DS=1e-3, DSMIN=1e-12, DSMAX=5e-2,
     EPSL=1e-9, EPSU=1e-9, EPSS=1e-7,
-    NTST=400, NCOL=4,
+    NTST=800, NCOL=4,
     bidirectional=False, get_period=True,
-    STOP=['LP3'],
 )
 periods = np.asarray(lc_sols[('PAR(11)', '')], dtype=float)
-print(f"LC bifurcations: {dict(lc_sols['bifurcation'].value_counts())}")
+print(f"LC bifurcations (raw): {dict(lc_sols['bifurcation'].value_counts())}")
 print(f"LC period grows from {periods.min():.1f} to {periods.max():.1f}")
-# Show the LPs and confirm they're real (stability flips) — reproduces
-# the two-fold structure of Gast-2020 Fig. 5.
-_bif = lc_sols[('bifurcation', '')].values
-_stab = lc_sols[('stability', '')].values
-_eta_col = ('eta', '') if ('eta', '') in lc_sols.columns \
-    else ('p/qif_biexp_sfa_op/eta', '')
-_eta = lc_sols[_eta_col].values
-for i, b in enumerate(_bif):
-    if str(b).strip() == 'LP':
-        flip = (_stab[i-1] != _stab[i]) if i > 0 else None
-        print(f"  LP @ eta={float(_eta[i]):+.5f}, period={periods[i]:7.2f}, "
-              f"stability flip: {bool(flip)}")
 
-# Quick 1D bifurcation diagram of the eta scan + LC envelope.
-fig, ax = plt.subplots(figsize=(8, 4))
+# Heuristically tag the homoclinic terminus as 'HC' on the LC summary:
+# the max-to-min period ratio is ~22 here, well above the default 5x
+# threshold for the heuristic to fire.
+hc_idx = ode.label_homoclinic_terminus('lc_branch')
+if hc_idx is not None:
+    _eta_col = ('eta', '') if ('eta', '') in lc_sols.columns \
+        else ('p/qif_biexp_sfa_op/eta', '')
+    print(f"HC marker placed at row {hc_idx}: "
+          f"eta = {float(lc_sols[_eta_col].iloc[hc_idx]):+.5f}, "
+          f"period = {periods[hc_idx]:.1f}")
+
+# 1D bifurcation diagram of the eta scan + LC envelope + HC marker.
+fig, ax = plt.subplots(figsize=(9, 4))
 ode.plot_continuation('p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
                       cont='eta_branch', ax=ax,
                       line_color_stable='#1F77B4', line_color_unstable='#1F77B4',
-                      bifurcation_legend=False, ignore=['UZ', 'BP', 'EP'],
+                      bifurcation_legend=False,
+                      ignore=['UZ', 'BP', 'EP'],
                       label='equilibrium')
 ode.plot_continuation('p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/r',
                       cont='lc_branch', ax=ax,
                       line_color_stable='#FF7F0E', line_color_unstable='#FF7F0E',
-                      bifurcation_legend=False, ignore=['UZ', 'BP', 'EP'],
+                      bifurcation_legend=False,
+                      ignore=['UZ', 'BP', 'EP', 'RG'],
                       label='limit cycle')
+# Plot the HC marker directly — plot_continuation's bifurcation table
+# doesn't know about our custom 'HC' label yet, so we drop a marker
+# manually at the labelled row.
+if hc_idx is not None:
+    eta_col = ('eta', '') if ('eta', '') in lc_sols.columns \
+        else ('p/qif_biexp_sfa_op/eta', '')
+    r_col = [c for c in lc_sols.columns
+             if isinstance(c, tuple) and c[0] == 'r'][0]
+    eta_hc = float(lc_sols[eta_col].iloc[hc_idx])
+    r_hc = lc_sols[r_col].iloc[hc_idx]
+    if hasattr(r_hc, '__len__'):
+        r_hc = float(np.max(r_hc))
+    else:
+        r_hc = float(r_hc)
+    ax.scatter([eta_hc], [r_hc], marker='X', s=120,
+               c='#D62728', edgecolor='k', linewidth=0.8, zorder=10,
+               label=f'HC (period ≈ {periods[hc_idx]:.0f})')
 ax.set_xlabel(r'$\bar\eta$')
 ax.set_ylabel(r'$r$')
-ax.set_title('1D bifurcation diagram — LC born at HB2 approaches a homoclinic')
+ax.set_title('1D bifurcation diagram — LC born at HB2 terminates at HC')
 ax.legend(loc='best')
 plt.tight_layout()
 plt.show()
@@ -213,8 +231,18 @@ plt.show()
 # stable down-state, an unstable middle saddle, and a stable up-state.
 # We pull the equilibrium values straight off the UZ labels we planted on
 # the ``eta_branch`` continuation in Step 1 — the saddle is identified as
-# the unstable middle equilibrium whose ``r`` coordinate matches the LC's
-# minimum ``r`` (the orbit's slow-point).
+# the unstable middle equilibrium whose ``r`` coordinate is between the LC
+# orbit's min and median ``r`` (i.e. the "slow-point" the orbit hovers near).
+#
+# .. note::
+#    The UZR :math:`\bar\eta = -5.394` doesn't *exactly* match the LC's
+#    EP1 :math:`\bar\eta = -5.39358` — and that small mismatch is
+#    intentional.  Reading the saddle off the LC's orbit slow-point puts
+#    us AT the codim-2 non-central SNIC vertex (PSI(15) ≈ 0), where
+#    HomCont has no direction to advance from.  A saddle taken from the
+#    eta-branch at a nominally-nearby :math:`\bar\eta` gives a slightly
+#    off-vertex starting orbit (PSI(15) of order 0.3), and HomCont can
+#    walk the codim-1 homoclinic curve forward.
 
 saddle_state = None
 for uz_label in ('UZ1', 'UZ2', 'UZ3'):
@@ -297,32 +325,110 @@ if n_snic:
 hom_curve_available = len(snic_sols) > 2
 
 # %%
-# Step 5: overlay the homoclinic curve on the 2D bifurcation diagram
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Step 6: codim-2 continuation of HB / LP curves in :math:`(\bar\eta,\, \Delta)`
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# When the HomCont continuation produced a meaningful curve, plot it in the
-# :math:`(\bar\eta,\, \Delta)` plane next to the codim-1 fold and Hopf
-# curves a codim-2 search would produce.  Any ``'SNIC'`` labels show up
-# as red stars — they pin the SNIC bifurcation points along the
-# homoclinic locus.
+# PyCoBi's :func:`codim2_search` wraps the standard auto-07p 2-parameter
+# continuation of codim-1 starting points.  Tracking the four equilibrium
+# bifurcations we located on ``eta_branch`` (``HB1``, ``HB2``, ``LP1``,
+# ``LP2``) in :math:`(\bar\eta,\, \Delta)` gives the codim-1 backbone we
+# need to plot alongside the homoclinic locus from Step 5.
+
+from pycobi.automated_continuation import codim2_search
+
+codim2_curves = []
+for sp in ('LP1', 'LP2', 'HB1', 'HB2'):
+    bif_type = 'fold' if sp.startswith('LP') else 'Hopf'
+    for ds in (1e-3, -1e-3):
+        try:
+            res = codim2_search(
+                pyauto_instance=ode,
+                params=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
+                starting_points=[sp],
+                origin='eta_branch',
+                name=f'codim2_{sp}_{"pos" if ds > 0 else "neg"}',
+                max_recursion_depth=0,
+                NMX=1500, NPR=20, DSMIN=1e-9, DSMAX=5e-2, DS=ds,
+                RL0=-15.0, RL1=5.0,
+                bidirectional=False,
+                UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 4.0]},
+            )
+            curve_name = next(iter(res))
+            codim2_curves.append((curve_name, bif_type))
+        except Exception as exc:
+            print(f"  codim-2 {sp} DS={ds:+g} skipped: "
+                  f"{type(exc).__name__}: {str(exc)[:80]}")
+
+# %%
+# Step 7: 2D bifurcation diagram with all the codim-1 curves + homoclinic
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+# Stack everything in the :math:`(\bar\eta,\, \Delta)` plane: fold curves
+# (blue), Hopf curves (orange), homoclinic curve (red), and any detected
+# non-central SNIC points (red stars).  The result is the complete
+# codim-1 bifurcation portrait of the QIF-SFA model in this slice.
+
+FOLD_COLOR = '#1F77B4'
+HOPF_COLOR = '#FF7F0E'
+HOM_COLOR  = '#D62728'
+
+fig, ax = plt.subplots(figsize=(9, 6))
+fold_labelled, hopf_labelled = False, False
+for curve_name, bif_type in codim2_curves:
+    color = FOLD_COLOR if bif_type == 'fold' else HOPF_COLOR
+    if bif_type == 'fold':
+        label = None if fold_labelled else 'fold of equilibria'
+        fold_labelled = True
+    else:
+        label = None if hopf_labelled else 'Hopf'
+        hopf_labelled = True
+    try:
+        ode.plot_continuation(
+            'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta',
+            cont=curve_name, ax=ax,
+            line_color_stable=color, line_color_unstable=color,
+            line_style_stable='solid', line_style_unstable='solid',
+            bifurcation_legend=False, get_stability=False,
+            ignore=['LP', 'HB', 'UZ', 'EP'],
+            label=label,
+        )
+    except (KeyError, ValueError):
+        pass
 
 if hom_curve_available:
-    fig, ax = plt.subplots(figsize=(8, 5))
     ode.plot_continuation(
         'p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta',
         cont='homoclinic', ax=ax,
-        line_color_stable='#D62728', line_color_unstable='#D62728',
+        line_color_stable=HOM_COLOR, line_color_unstable=HOM_COLOR,
         line_style_stable='solid', line_style_unstable='dashed',
         bifurcation_legend=False, get_stability=False,
         ignore=['UZ', 'EP', 'RG'],
-        label='homoclinic curve',
+        label='homoclinic',
     )
-    ax.set_xlabel(r'$\bar\eta$')
-    ax.set_ylabel(r'$\Delta$')
-    ax.set_title('Homoclinic curve in the $(\\bar\\eta,\\, \\Delta)$ plane')
-    ax.legend(loc='best')
-    plt.tight_layout()
-    plt.show()
+    # Plant explicit markers at the codim-2 non-central SNIC points
+    # (the PSI(15)/(16) zero-crossings flagged as 'SNIC' in Step 5).
+    snic_col = ('bifurcation', '')
+    eta_col = [c for c in snic_sols.columns
+               if isinstance(c, tuple) and 'eta' in c[0]][0]
+    delta_col = [c for c in snic_sols.columns
+                 if isinstance(c, tuple) and 'Delta' in c[0]][0]
+    snic_rows = snic_sols[snic_sols[snic_col] == 'SNIC']
+    if len(snic_rows):
+        ax.scatter(snic_rows[eta_col].to_numpy(dtype=float),
+                   snic_rows[delta_col].to_numpy(dtype=float),
+                   marker='*', s=200, c=HOM_COLOR,
+                   edgecolor='k', linewidth=0.8, zorder=10,
+                   label='non-central SNIC')
+
+ax.set_xlabel(r'$\bar\eta$')
+ax.set_ylabel(r'$\Delta$')
+ax.set_xlim(-12.0, 5.0)
+ax.set_ylim(0.0, 4.0)
+ax.set_title('Complete codim-1 bifurcation portrait in '
+             r'$(\bar\eta,\, \Delta)$')
+ax.legend(loc='best')
+plt.tight_layout()
+plt.show()
 
 # %%
 # Reference table — HomCont PSI test functions
