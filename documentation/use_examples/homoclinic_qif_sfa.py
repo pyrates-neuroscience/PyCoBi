@@ -71,12 +71,16 @@ ode = ODESystem.from_yaml(
 )
 
 # Equilibrium continuation in eta — locates HB1 / HB2 / LP1 / LP2.
+# UZR pins :math:`\bar\eta = -5.39406` (the homoclinic point we will
+# discover from the LC's BP cluster in Step 2) so the saddle equilibrium's
+# state values are available as labelled UZ solutions later in Step 4.
 eta_sols, _ = ode.run(
     starting_point='EP2', name='eta_branch',
     c='eq', ICP='p/qif_biexp_sfa_op/eta', bidirectional=True,
     RL0=-8.0, RL1=2.0,
     NMX=2000, NPR=10, DS=1e-4, DSMIN=1e-8, DSMAX=5e-2,
     ITMX=40, ITNW=40, NWTN=12, NTST=400, NCOL=4,
+    UZR={'p/qif_biexp_sfa_op/eta': [-5.39406]},
 )
 print("eta scan:", dict(eta_sols['bifurcation'].value_counts()))
 
@@ -186,68 +190,92 @@ plt.tight_layout()
 plt.show()
 
 # %%
-# Step 4: continue the homoclinic curve in :math:`(\bar\eta,\, \Delta)`
+# Step 4: find the saddle equilibrium (the homoclinic's target)
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+# A homoclinic orbit by definition leaves and returns to a saddle equilibrium.
+# At :math:`\bar\eta \approx -5.394` the QIF-SFA has three equilibria: a
+# stable down-state, an unstable middle saddle, and a stable up-state.
+# We pull the equilibrium values straight off the UZ labels we planted on
+# the ``eta_branch`` continuation in Step 1 — the saddle is identified as
+# the unstable middle equilibrium whose ``r`` coordinate matches the LC's
+# minimum ``r`` (the orbit's slow-point).
+
+saddle_state = None
+for uz_label in ('UZ1', 'UZ2', 'UZ3'):
+    try:
+        s, _, _ = ode.get_solution(cont='eta_branch', point=uz_label)
+        if hasattr(s, 'b') and isinstance(getattr(s, 'b', None), dict):
+            s = s.b['solution']
+        coords = {c: float(np.asarray(s[c]).ravel()[0]) for c in s.coordnames}
+        # the saddle is the unstable middle equilibrium; r matches LC's min r
+        if abs(coords['r'] - data[:, 1].min()) < 0.05:
+            saddle_state = coords
+            print(f"saddle equilibrium at {uz_label}: r={coords['r']:.4f}, "
+                  f"v={coords['v']:.4f}, A={coords['A']:.4f}, B={coords['B']:.4f}")
+            break
+    except (KeyError, AttributeError):
+        pass
+
+# %%
+# Step 5: continue the homoclinic curve in :math:`(\bar\eta,\, \Delta)`
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# :meth:`continue_homoclinic` handles four things in one call:
+# :meth:`continue_homoclinic` now wraps the full LC-to-HomCont seed
+# preparation pipeline:
 #
-# 1. Pulls the seed orbit out of ``lc_branch`` via :meth:`extract_orbit_to_dat`
-#    (reusing the file we just inspected — pass ``dat_basename='lc_seed'``).
-# 2. Reads the orbit's parameter values off the auto solution object and
-#    forwards them via ``PAR={...}`` so HomCont's Newton step starts at the
-#    correct point in parameter space (without this, ``STPNT``'s YAML
-#    defaults clobber :math:`\bar\eta = -4.6` back to :math:`-8`).
-# 3. Appends ``PAR(20 + IPSI[j])`` for each chosen PSI test function to
-#    ``ICP`` so the test-function values are recorded along the branch.
-# 4. After the run, scans those PAR columns for sign changes and writes
-#    ``'SNIC'`` into the bifurcation column at each crossing — the
-#    non-central-homoclinic-to-saddle-node detection that motivates this
-#    whole machinery (AUTO §20.5; ``HOMCONT_PSI_NAMES[15]`` /
-#    ``[16]`` for the meaning of those two specifically).
+# 1. ``extract_orbit_to_dat`` reads the labelled LC profile straight off
+#    auto-07p's solution object.
+# 2. ``phase_shift_to=saddle_state`` re-rolls the orbit so the point
+#    closest to the saddle sits at :math:`t = 0` — without this, the LC's
+#    arbitrary phase choice leaves HomCont's stable / unstable manifold
+#    projections misaligned and Newton MXs at step 2.
+# 3. ``saddle_state`` also populates ``PAR(11 + i)`` with the saddle's
+#    coordinates (one per state variable, in uname order).  Combined with
+#    ``IEQUIB = 0``, this pins HomCont's equilibrium at the precomputed
+#    saddle rather than asking Newton to find it.
+# 4. The seed's parameter values (from the auto solution's PAR vector)
+#    are forwarded via ``PAR={...}`` so the homoclinic starts at the
+#    correct :math:`(\bar\eta, \Delta, \alpha, \dots)`.
+# 5. After the run, ``_flag_psi_zero_crossings`` scans ``PAR(35) = PSI(15)``
+#    and ``PAR(36) = PSI(16)`` for sign changes and marks each as
+#    ``'SNIC'`` (non-central homoclinic to saddle-node).
 #
 # .. note::
-#    HomCont convergence is sensitive to (a) the seed orbit being close
-#    enough to a true homoclinic, (b) the eigenvalue-split kwargs
-#    ``NUNSTAB`` / ``NSTAB`` matching the saddle's manifold structure,
-#    and (c) the ``IEQUIB`` flag.  For the QIF-SFA model at this
-#    parameter regime the saddle is 4-dimensional with one unstable +
-#    three stable directions (``NUNSTAB=1, NSTAB=3``).  If you adapt
-#    this recipe to a different model, expect to spend some time tuning
-#    these — auto-07p's HomCont demos (``demos/cir``, ``demos/she``)
-#    are the canonical references.
+#    Eigenvalue-split kwargs (``NUNSTAB``, ``NSTAB``) still need to match
+#    the model's saddle structure; for this 4-D QIF-SFA the saddle has one
+#    unstable + three stable directions, hence ``NUNSTAB=1, NSTAB=3``.
+#    Adapting the recipe to a different model means picking these from
+#    the local eigenvalue spectrum of the saddle.
 
-try:
-    snic_sols, _ = ode.continue_homoclinic(
-        origin='lc_branch', starting_point='EP1',
-        ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
-        NUNSTAB=1, NSTAB=3,
-        IEQUIB=1, ITWIST=0,
-        IPSI=(1, 4, 15, 16),     # saddle-loop test funcs + SNIC indicators
-        n_points=201,
-        NMX=500, NPR=10, DSMAX=0.1, DS=0.01,
-        RL0=-15.0, RL1=5.0,
-        UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.01, 4.0]},
-        name='homoclinic',
-    )
-    bifs = dict(snic_sols['bifurcation'].value_counts())
-    print(f"HomCont curve: {bifs}")
-    n_snic = bifs.get('SNIC', 0)
-    if n_snic:
-        print(f"\n{n_snic} non-central-homoclinic-to-saddle-node point(s) detected:")
-        print(snic_sols[snic_sols['bifurcation'] == 'SNIC'][
-            [('p/qif_biexp_sfa_op/eta', ''), ('p/qif_biexp_sfa_op/Delta', '')]
-        ])
-    hom_curve_available = len(snic_sols) > 2
-except Exception as exc:
-    print(f"HomCont continuation did not converge: "
-          f"{type(exc).__name__}: {exc}")
-    print("This is expected when the seed orbit isn't yet close enough to a "
-          "true homoclinic, or when (NUNSTAB, NSTAB, IEQUIB) don't match the "
-          "saddle structure of the model.  Push NMX higher on the LC step "
-          "above to get a higher-period seed, or try different eigenvalue "
-          "splits — see the AUTO demos/cir tutorial for a worked example "
-          "of HomCont parameter tuning.")
-    hom_curve_available = False
+snic_sols, _ = ode.continue_homoclinic(
+    origin='lc_branch', starting_point='EP1',
+    ICP=['p/qif_biexp_sfa_op/eta', 'p/qif_biexp_sfa_op/Delta'],
+    NUNSTAB=1, NSTAB=3,
+    IEQUIB=0, ITWIST=0,
+    IPSI=(15, 16),
+    saddle_state=saddle_state,
+    n_points=201,
+    NTST=100, NCOL=4, IAD=1, ISP=0, ILP=0,
+    NMX=400, NPR=10, IID=2, ITMX=10, ITNW=7, NWTN=3,
+    DS=0.001, DSMIN=1e-5, DSMAX=0.05,
+    UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.01, 4.0]},
+    name='homoclinic',
+)
+bifs = dict(snic_sols['bifurcation'].value_counts())
+print(f"\nHomCont curve in (eta, Delta): {bifs}, {len(snic_sols)} points")
+n_snic = bifs.get('SNIC', 0)
+if n_snic:
+    snic_col = ('bifurcation', '')
+    print(f"\n{n_snic} non-central-homoclinic-to-saddle-node point(s) detected:")
+    snic_rows = snic_sols[snic_sols[snic_col] == 'SNIC']
+    eta_col = [c for c in snic_sols.columns
+               if isinstance(c, tuple) and 'eta' in c[0]][0]
+    delta_col = [c for c in snic_sols.columns
+                 if isinstance(c, tuple) and 'Delta' in c[0]][0]
+    for _, row in snic_rows.iterrows():
+        print(f"  eta = {float(row[eta_col]):+.5f}, Delta = {float(row[delta_col]):.4f}")
+hom_curve_available = len(snic_sols) > 2
 
 # %%
 # Step 5: overlay the homoclinic curve on the 2D bifurcation diagram

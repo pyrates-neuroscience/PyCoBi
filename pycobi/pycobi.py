@@ -997,7 +997,8 @@ class ODESystem:
     def extract_orbit_to_dat(self, cont: Union[Any, str, int], point: Union[str, int],
                              path: Union[str, Path], *,
                              n_points: Optional[int] = None,
-                             variables: Optional[list] = None) -> Path:
+                             variables: Optional[list] = None,
+                             phase_shift_to: Optional[dict] = None) -> Path:
         """Write a labelled periodic-orbit profile to an auto-07p ``.dat`` file.
 
         Used to seed HomCont (``IPS=9``) continuations from a near-homoclinic
@@ -1020,6 +1021,17 @@ class ODESystem:
         variables
             Optional subset of state-variable names to write.  Defaults to
             every variable auto-07p exposed via the solution's ``coordnames``.
+        phase_shift_to
+            Optional ``{var_name: target_value, ...}`` dict that re-rolls the
+            orbit so its closest-approach point to the given state lies at
+            ``t = 0``.  Distance is the L2 norm over the keys provided (other
+            state variables are not consulted).  Useful when seeding
+            ``continue_homoclinic`` from a near-homoclinic LC: the orbit's
+            ``t = 0`` end should sit near the saddle equilibrium so HomCont's
+            stable / unstable manifold projections align with the orbit's
+            phase from step one.  Without this, the LC's arbitrary phase
+            choice typically leaves auto-07p's HomCont Newton step unable to
+            advance off the seed (MX at step 2).
 
         Returns
         -------
@@ -1049,6 +1061,25 @@ class ODESystem:
 
         time = np.asarray(s.indepvararray, dtype=float)
         data = {v: np.asarray(s[v], dtype=float).ravel() for v in variables}
+
+        # Optional phase shift — find the orbit's closest-approach point to
+        # the given target state and re-roll the trajectory so that point
+        # lands at t = 0.  See docstring above for the HomCont rationale.
+        if phase_shift_to:
+            unknown = [k for k in phase_shift_to if k not in data]
+            if unknown:
+                raise KeyError(
+                    f"phase_shift_to references variables not in the orbit: {unknown}"
+                )
+            dist_sq = sum((data[k] - float(phase_shift_to[k])) ** 2
+                          for k in phase_shift_to)
+            i_min = int(np.argmin(dist_sq))
+            if i_min:
+                for v in variables:
+                    data[v] = np.concatenate([data[v][i_min:], data[v][:i_min]])
+                # re-issue evenly spaced parametric time on [0, 1]
+                time = np.linspace(0.0, 1.0, len(time))
+
         df = DataFrame(data, index=time)
         return write_auto_dat(df, path, n_points=n_points)
 
@@ -1066,6 +1097,8 @@ class ODESystem:
                             dat_basename: Optional[str] = None,
                             n_points: int = 201,
                             label_psi_crossings: bool = True,
+                            saddle_state: Optional[dict] = None,
+                            warmup_period: Optional[float] = None,
                             **run_kwargs) -> tuple:
         r"""Continue a homoclinic orbit seeded from a near-homoclinic LC or
         a pre-existing ``.dat`` file.
@@ -1196,6 +1229,7 @@ class ODESystem:
             dat_path = self.extract_orbit_to_dat(
                 cont=origin, point=starting_point,
                 path=str(Path(self.dir) / dat_basename), n_points=n_points,
+                phase_shift_to=saddle_state,
             )
             # Pull the seed orbit's parameter values out of the auto solution
             # and forward them via the ``PAR={...}`` directive — without this,
@@ -1213,24 +1247,102 @@ class ODESystem:
             # Allow caller-supplied PAR overrides to win.
             seed_pars.update(run_kwargs.pop('PAR', {}))
 
+        # Saddle equilibrium override.  HomCont stores it at PAR(11 + i) for
+        # i = 1, ..., NDIM when ``IEQUIB`` flags the equilibrium as fixed or
+        # being projected (0, -1, 2, -2).  Map the user's ``{var_name:
+        # value}`` dict onto those PAR slots using the model's uname order.
+        if saddle_state:
+            unames = self._uname_order()
+            if not unames:
+                raise RuntimeError(
+                    "continue_homoclinic: saddle_state given but the model's "
+                    "unames are not registered yet.  Run any IPS=1 / IPS=2 "
+                    "continuation first (or instantiate via from_template) "
+                    "so PyRates can populate the uname index."
+                )
+            for var_name, value in saddle_state.items():
+                if var_name not in unames:
+                    raise KeyError(
+                        f"saddle_state: variable {var_name!r} not in the "
+                        f"model's unames {list(unames)}."
+                    )
+                seed_pars[11 + unames.index(var_name) + 1] = float(value)
+
         # Append PSI test-function PARs to ICP so they end up in the summary
         # for the zero-crossing scan and for visual inspection.
         psi_pars = [20 + j for j in IPSI]
         icp_full = list(ICP) + [p for p in psi_pars if p not in ICP]
 
-        sols, cont = self.run(
-            c='hom', name=name,
-            ICP=icp_full,
-            NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
-            IEQUIB=int(IEQUIB), ITWIST=int(ITWIST), ISTART=1,
-            IPSI=list(IPSI),
-            dat=dat_path.stem, PAR=seed_pars,
-            **run_kwargs,
-        )
+        # Optional warmup pass: HomCont with ``ICP = [11, first_model_par]``
+        # to step the orbit's truncation interval (period) off the codim-2
+        # SNIC vertex along the saddle-loop homoclinic curve.  Without
+        # this, a seed that already sits at ``PSI(15) ~ 0`` (the LC's
+        # high-period endpoint, after phase-shifting onto the saddle) has
+        # no direction to advance — Newton MXs at step 2.  After the
+        # warmup walks PAR(11) up to ``warmup_period``, we restart from
+        # the resulting state with the user-requested 2D ICP and the same
+        # IPSI test functions in play.
+        if warmup_period is not None:
+            warm_icp = [11] + [p for p in ICP[:1] if p != 11]
+            warm_kwargs = {k: v for k, v in run_kwargs.items()
+                           if k not in ('UZR', 'UZSTOP', 'STOP')}
+            warm_uzstop = {11: float(warmup_period)}
+            warm_sols, _ = self.run(
+                c='hom', name=f'{name}__warmup',
+                ICP=warm_icp,
+                NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
+                IEQUIB=int(IEQUIB), ITWIST=int(ITWIST), ISTART=1,
+                IPSI=list(IPSI),
+                dat=dat_path.stem, PAR=seed_pars,
+                UZSTOP=warm_uzstop,
+                **warm_kwargs,
+            )
+            sols, cont = self.run(
+                starting_point='UZ1', origin=f'{name}__warmup',
+                c='hom', name=name,
+                ICP=icp_full,
+                NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
+                IEQUIB=int(IEQUIB), ITWIST=int(ITWIST),
+                IPSI=list(IPSI),
+                **run_kwargs,
+            )
+        else:
+            sols, cont = self.run(
+                c='hom', name=name,
+                ICP=icp_full,
+                NUNSTAB=int(NUNSTAB), NSTAB=int(NSTAB),
+                IEQUIB=int(IEQUIB), ITWIST=int(ITWIST), ISTART=1,
+                IPSI=list(IPSI),
+                dat=dat_path.stem, PAR=seed_pars,
+                **run_kwargs,
+            )
 
         if label_psi_crossings:
             self._flag_psi_zero_crossings(sols, ipsi=IPSI, label='SNIC')
         return sols, cont
+
+    def _uname_order(self) -> list:
+        """Return the model's state-variable names in PAR-slot order (1-based).
+
+        Reads from auto-07p's parnames/unames mapping that PyRates populated
+        when the model was generated; returns an empty list if not yet
+        registered (e.g., the user is in the middle of a fresh from_template
+        call). Used by :meth:`continue_homoclinic` to map a ``saddle_state``
+        dict onto ``PAR(11 + i)`` slots.
+        """
+        runner = self._get_auto_runner()
+        if runner is None:
+            return []
+        constants = runner.options.get('constants', {})
+        unames = constants.get('unames')
+        if not unames:
+            return []
+        # auto-07p stores unames as a list of ``[idx, name]`` pairs (mirrors
+        # how it appears in the c.* file).  Sort by idx and return the names.
+        try:
+            return [name for _, name in sorted(unames, key=lambda p: p[0])]
+        except (TypeError, ValueError):
+            return []
 
     @staticmethod
     def _flag_psi_zero_crossings(summary: DataFrame, ipsi: tuple,
