@@ -333,6 +333,17 @@ hom_curve_available = len(snic_sols) > 2
 # bifurcations we located on ``eta_branch`` (``HB1``, ``HB2``, ``LP1``,
 # ``LP2``) in :math:`(\bar\eta,\, \Delta)` gives the codim-1 backbone we
 # need to plot alongside the homoclinic locus from Step 5.
+#
+# .. note::
+#    ``NPR=5`` is deliberately tighter than the typical ``NPR=20`` you'd
+#    use for a 1-parameter scan.  ``NPR`` is auto-07p's stored-point
+#    spacing: with the default 20, the first stored row on a codim-2
+#    branch lies ~20 continuation steps (up to ~1 unit of arclength at
+#    ``DSMAX=5e-2``) past the LP/HB starting point on ``eta_branch``,
+#    leaving a visible gap in the :math:`(\bar\eta,\, \Delta)` plot
+#    between each codim-1 source on ``eta_branch`` and the start of its
+#    own codim-2 curve.  Lowering to ``NPR=5`` shrinks the first-step
+#    offset to ~0.01 units — visually contiguous on the plot.
 
 from pycobi.automated_continuation import codim2_search
 
@@ -348,7 +359,7 @@ for sp in ('LP1', 'LP2', 'HB1', 'HB2'):
                 origin='eta_branch',
                 name=f'codim2_{sp}_{"pos" if ds > 0 else "neg"}',
                 max_recursion_depth=0,
-                NMX=1500, NPR=20, DSMIN=1e-9, DSMAX=5e-2, DS=ds,
+                NMX=3000, NPR=5, DSMIN=1e-9, DSMAX=5e-2, DS=ds,
                 RL0=-15.0, RL1=5.0,
                 bidirectional=False,
                 UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.0, 4.0]},
