@@ -1,6 +1,94 @@
 Changelog
 =========
 
+1.1
+---
+
+1.1.0
+~~~~~
+
+Minor release that brings two new continuation modes — **boundary
+value problems** and **homoclinic continuations** — to PyCoBi's
+high-level surface, along with two new gallery examples reproducing
+auto-07p's ``mtn`` demo and a QIF-SFA mean-field study.  Requires
+``pyrates >= 1.2.2`` for the underlying Fortran code-generation
+support.
+
+Boundary value problems
+'''''''''''''''''''''''
+
+- BVP is now a first-class scenario on ``ODESystem.from_template``:
+  pass ``auto_constants=('bvp',)`` plus ``boundary_conditions=[...]``
+  and/or ``integral_constraints=[...]`` and the generated ``.f90`` /
+  ``c.bvp`` are emitted with populated ``BCND`` / ``ICND`` routines
+  and correctly sized ``NBC`` / ``NINT``.  No more hand-editing of
+  the Fortran sources.
+- New gallery example walking through PyRates' BCND/ICND DSL on the
+  Gelfand-Bratu equation — recovers the canonical fold at
+  λ\* = 3.513830719 to 10 decimals.
+
+Homoclinic continuation (HomCont)
+'''''''''''''''''''''''''''''''''
+
+- New ``ODESystem.continue_homoclinic`` method drives auto-07p's
+  ``IPS=9`` HomCont path (Ch. 20 of the auto-07p manual).  Two
+  workflows are supported:
+
+  - **Mode A** (from an LC continuation): pass ``origin`` and a
+    branch with a near-homoclinic limit cycle and the helper
+    extracts the orbit profile, prepares the ``.dat`` seed, finds
+    the saddle equilibrium, and sets up ``PAR(11..)`` automatically.
+    The seed-prep step is fully automated via the
+    ``phase_shift_to`` / ``saddle_state`` / ``warmup_period``
+    kwargs.
+  - **Mode B** (from a pre-existing ``.dat``): pass
+    ``dat_basename`` and PyCoBi copies the seed into place and runs
+    HomCont straight off disk — the workflow needed to reproduce
+    auto-07p's own demos.
+
+- ``IPSI=(15, 16)`` zero-crossing detection now flags codim-2
+  **non-central SNIC** points along the homoclinic locus in the
+  sense of Nechyporenko, Ashwin & Tsaneva-Atanasova (2026,
+  arXiv:2412.12298) — where the homoclinic orbit's return
+  trajectory comes in along the saddle-node's *stable* or
+  *unstable* manifold rather than along the central (zero-eigenvalue)
+  direction.  These are distinct from the codim-1 SNIC of a
+  periodic orbit.
+- New ``label_homoclinic_terminus`` helper labels the LC point where
+  the period diverges (the saddle-loop side of the homoclinic
+  tangency) with a distinct ``'HC'`` marker so it can be plotted
+  separately from the surrounding RG points.
+- Two new gallery examples:
+
+  - ``homoclinic_mtn.py`` reproduces auto-07p's ``demos/mtn`` —
+    Scheffer's predator-prey model — using PyCoBi's Mode-B HomCont
+    workflow.
+  - ``homoclinic_qif_sfa.py`` builds a complete codim-1 + codim-2
+    bifurcation portrait of a QIF-SFA mean-field model: LC
+    continuation with the new tightened tolerances, HomCont along
+    the homoclinic locus with non-central SNIC labelling, and a
+    parallel ``codim2_search`` run of all four equilibrium
+    bifurcations to give the full Hopf / fold backbone alongside
+    the homoclinic curve.
+
+Utilities and fixes
+'''''''''''''''''''
+
+- New ``write_auto_dat`` utility: serialises a PyCoBi solution
+  ``DataFrame`` into auto-07p's ``.dat`` orbit-profile format
+  (header line + ``NTST * NCOL + 1`` rows of ``time, u_1, ..., u_n``,
+  Fortran-style scientific notation), the seed format
+  ``continue_homoclinic`` consumes in Mode B.
+- ``reset_auto_state`` no longer triggers a fresh ``import auto`` on
+  a process that has never imported it — fixes a startup-order
+  ``KeyError`` in scripts that call ``reset_auto_state`` before any
+  ``ODESystem`` is instantiated.
+- HomCont scenario ``c.hom`` defaults: ``IPS=9, ILP=0, ISP=0,
+  JAC=1, ICP=[1, 11]`` matching auto-07p's own conventions; HomCont-
+  specific keys (``NUNSTAB``, ``NSTAB``, ``IEQUIB``, ``ITWIST``,
+  ``ISTART``, ``IREV``, ``IFIXED``, ``IPSI``) are filtered to
+  ``c.hom`` and stripped from c.eq / c.lc / c.ivp / c.bvp.
+
 1.0
 ---
 
