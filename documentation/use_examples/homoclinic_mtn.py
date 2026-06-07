@@ -28,10 +28,15 @@ with the Holling-II functional responses
 The seed orbit lives at :math:`(K, G_f, d, H_z) = (6.0, 0.0673, 0.01, 0.5)`
 with the saddle equilibrium at :math:`(u^\star, w^\star) = (5.7386, 0.5108)`
 and a truncation interval :math:`\text{PAR}(11) = 1046.18`.  Continuing in
-:math:`(K, G_f)` while monitoring the SNIC test functions, the first run
-walks the saddle-node-homoclinic curve and flags a UZ point at
-:math:`K \approx 6.61,\ G_f \approx 0.069` where :math:`\psi_{15} = 0`
-(matching auto-07p's mtn.1 step 26 to all significant figures).
+:math:`(K, G_f)` while monitoring the PSI(15)/(16) test functions, the
+first run walks the curve of homoclinics to a saddle-node and flags a UZ
+point at :math:`K \approx 6.61,\ G_f \approx 0.069` where
+:math:`\psi_{15} = 0` (matching auto-07p's mtn.1 step 26 to all significant
+figures).  The UZ marks the codim-2 **non-central SNIC** in the sense of
+Nechyporenko, Ashwin & Tsaneva-Atanasova (2026, arXiv:2412.12298) —
+where the homoclinic orbit's return trajectory comes in along the
+saddle-node's *stable* manifold rather than along the central
+(zero-eigenvalue) direction — *not* the codim-1 SNIC of a periodic orbit.
 
 References
 ^^^^^^^^^^

@@ -1137,8 +1137,18 @@ class ODESystem:
            The corresponding test-function PARs (``PAR(20 + IPSI[j])``) are
            appended to ``ICP`` so they're recorded along the branch.
         3. When ``label_psi_crossings=True`` (default), scan those PAR columns
-           for sign changes and mark each crossing as a ``'SNIC'`` (non-central
-           homoclinic to saddle-node) bifurcation on the resulting summary.
+           for sign changes and mark each crossing as a ``'SNIC'`` bifurcation
+           on the resulting summary.  Note: the label name is a historical
+           shorthand — what these flags actually detect is the *codim-2
+           non-central SNIC* bifurcation (Nechyporenko, Ashwin & Tsaneva-
+           Atanasova, *A novel route to oscillations via non-central
+           SNICeroclinic bifurcation*, SIAM J. Appl. Dyn. Syst. 2026,
+           arXiv:2412.12298), i.e. a homoclinic to a saddle-node whose
+           return trajectory comes in along the saddle-node's stable
+           manifold rather than its central (zero-eigenvalue) direction.
+           It is **not** the standard codim-1 SNIC (saddle-node on an
+           invariant cycle) — the non-central SNIC is a codim-2 endpoint
+           that *bounds* a curve of standard SNIC bifurcations.
 
         Pipeline (mode B):
 
@@ -1169,8 +1179,12 @@ class ODESystem:
         IPSI
             PSI test functions to monitor.  Defaults to ``(15, 16)`` —
             *non-central homoclinic to saddle-node* in the stable / unstable
-            manifold respectively (AUTO §20.5).  See :data:`HOMCONT_PSI_NAMES`
-            for the full table.
+            manifold respectively (AUTO §20.5).  Zero-crossings of these two
+            mark the **codim-2 non-central SNIC** bifurcation in the sense of
+            Nechyporenko et al. 2026 (arXiv:2412.12298) — a vertex that
+            terminates a curve of codim-1 SNIC bifurcations.  See
+            :data:`HOMCONT_PSI_NAMES` for the full table of 16 PSI test
+            functions auto-07p makes available.
         name
             Name to register the resulting continuation under.
         dat_basename
@@ -1354,6 +1368,17 @@ class ODESystem:
         into the summary's ``bifurcation`` column at every crossing whose row
         wasn't already tagged with a stronger auto-07p label.  Returns the
         number of crossings flagged.
+
+        Note on the default label: ``'SNIC'`` is the historical PyCoBi name
+        for the test functions auto-07p calls "non-central homoclinic to
+        saddle-node" (``PSI(15)``, ``PSI(16)`` — the typical pick).  In
+        modern terminology (Nechyporenko, Ashwin & Tsaneva-Atanasova 2026,
+        arXiv:2412.12298) the resulting codim-2 bifurcation is the
+        **non-central SNIC**, distinct from the standard codim-1 SNIC
+        (saddle-node on invariant cycle) — the non-central SNIC is a
+        *vertex* terminating a curve of standard SNICs.  Override
+        ``label='NCSN'`` (or anything else) on the caller side if the
+        precise terminology matters for downstream plotting / inspection.
         """
         # the bifurcation column on PyCoBi's MultiIndex summaries is always
         # ``('bifurcation', '')``; on a flattened summary it's the bare string.
@@ -1382,7 +1407,13 @@ class ODESystem:
 
     # PSI test-function meanings (AUTO manual §20.5 / homcont.f90:PSIHO).
     # Reference table for users picking ``IPSI=[...]`` in
-    # :meth:`continue_homoclinic`.
+    # :meth:`continue_homoclinic`.  Each PSI is a scalar test function;
+    # zero-crossings along a homoclinic continuation in 2 parameters flag a
+    # specific codim-2 degeneracy on the homoclinic curve.  IPSI=(15, 16)
+    # is the typical pick for *non-central SNIC* detection (Nechyporenko,
+    # Ashwin & Tsaneva-Atanasova 2026, arXiv:2412.12298) — a codim-2
+    # *vertex* terminating a curve of standard codim-1 SNIC bifurcations,
+    # NOT the codim-1 SNIC itself.
     HOMCONT_PSI_NAMES = {
         1: 'Resonant eigenvalues (neutral saddle)',
         2: 'Double real stable leading eigenvalues',
@@ -1398,8 +1429,12 @@ class ODESystem:
         12: 'Orbit flip (leading unstable direction)',
         13: 'Inclination flip (stable manifold)',
         14: 'Inclination flip (unstable manifold)',
-        15: 'Non-central homoclinic to saddle-node (stable manifold)',
-        16: 'Non-central homoclinic to saddle-node (unstable manifold)',
+        15: 'Non-central homoclinic to saddle-node, stable manifold '
+            '(codim-2 non-central SNIC bifurcation, '
+            'Nechyporenko-Ashwin-Tsaneva-Atanasova 2026)',
+        16: 'Non-central homoclinic to saddle-node, unstable manifold '
+            '(codim-2 non-central SNIC bifurcation, '
+            'Nechyporenko-Ashwin-Tsaneva-Atanasova 2026)',
     }
 
     def extract(self, keys: list, cont: Union[Any, str, int], point: Union[str, int] = None) -> tuple:

@@ -17,8 +17,19 @@ This example demonstrates PyCoBi's support for auto-07p's HomCont extension
   extract the near-homoclinic orbit, seed a HomCont continuation in two
   parameters, append the requested PSI test-function PARs
   (``PAR(20 + IPSI[j])``) to ``ICP`` so they land in the summary, then
-  post-process the result to flag every PSI zero-crossing as a custom
+  post-process the result to flag every PSI zero-crossing as a
   ``'SNIC'`` bifurcation in the bifurcation column.
+
+  .. note::
+     The ``'SNIC'`` label is the historical PyCoBi name and *not* the
+     standard codim-1 SNIC bifurcation (saddle-node on invariant cycle).
+     With the default ``IPSI=(15, 16)`` we are detecting the **codim-2
+     non-central SNIC** of Nechyporenko, Ashwin & Tsaneva-Atanasova 2026
+     (arXiv:2412.12298): a homoclinic orbit to a saddle-node equilibrium
+     whose return trajectory enters the saddle-node along its stable
+     manifold rather than along the central (zero-eigenvalue) direction.
+     This is a *vertex* terminating a curve of codim-1 SNIC bifurcations,
+     not the codim-1 SNIC itself.
 
 The model is the bi-exponential QIF mean field with spike-frequency
 adaptation from the :ref:`Automated Codim-2 Search` example.  At
@@ -34,6 +45,10 @@ References
 .. [1] R. Gast, H. Schmidt, T.R. Knösche (2020) *A Mean-Field Description of
    Bursting Dynamics in Spiking Neural Networks with Short-Term Adaptation.*
    Neural Computation 32 (9): 1615-1634.
+.. [2] K. Nechyporenko, P. Ashwin, K. Tsaneva-Atanasova (2026) *A novel
+   route to oscillations via non-central SNICeroclinic bifurcation:
+   unfolding the separatrix loop between a saddle-node and a saddle.*
+   SIAM J. Appl. Dyn. Syst., to appear.  arXiv:2412.12298.
 """
 
 # %%
@@ -239,7 +254,10 @@ for uz_label in ('UZ1', 'UZ2', 'UZ3'):
 #    correct :math:`(\bar\eta, \Delta, \alpha, \dots)`.
 # 5. After the run, ``_flag_psi_zero_crossings`` scans ``PAR(35) = PSI(15)``
 #    and ``PAR(36) = PSI(16)`` for sign changes and marks each as
-#    ``'SNIC'`` (non-central homoclinic to saddle-node).
+#    ``'SNIC'`` in the bifurcation column.  Per the docstring note above:
+#    these are codim-2 **non-central SNIC** bifurcations (Nechyporenko et
+#    al. 2026, arXiv:2412.12298) — endpoints of a curve of standard SNIC
+#    bifurcations — not the codim-1 SNIC itself.
 #
 # .. note::
 #    Eigenvalue-split kwargs (``NUNSTAB``, ``NSTAB``) still need to match
@@ -267,7 +285,8 @@ print(f"\nHomCont curve in (eta, Delta): {bifs}, {len(snic_sols)} points")
 n_snic = bifs.get('SNIC', 0)
 if n_snic:
     snic_col = ('bifurcation', '')
-    print(f"\n{n_snic} non-central-homoclinic-to-saddle-node point(s) detected:")
+    print(f"\n{n_snic} non-central SNIC bifurcation(s) detected on the "
+          f"homoclinic curve (Nechyporenko et al. 2026, arXiv:2412.12298):")
     snic_rows = snic_sols[snic_sols[snic_col] == 'SNIC']
     eta_col = [c for c in snic_sols.columns
                if isinstance(c, tuple) and 'eta' in c[0]][0]
