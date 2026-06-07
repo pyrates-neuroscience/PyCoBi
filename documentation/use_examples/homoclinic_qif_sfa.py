@@ -303,7 +303,7 @@ snic_sols, _ = ode.continue_homoclinic(
     saddle_state=saddle_state,
     n_points=201,
     NTST=100, NCOL=4, IAD=1, ISP=0, ILP=0,
-    NMX=400, NPR=10, IID=2, ITMX=10, ITNW=7, NWTN=3,
+    NMX=1000, NPR=5, IID=2, ITMX=10, ITNW=7, NWTN=3,
     DS=0.001, DSMIN=1e-5, DSMAX=0.05,
     UZSTOP={'p/qif_biexp_sfa_op/Delta': [0.01, 4.0]},
     name='homoclinic',
